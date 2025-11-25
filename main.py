@@ -52,7 +52,7 @@ async def main():
         json.dump(final_state, f, ensure_ascii=False, indent=2)
         
     print("\n--- 🏁 Execution Finished ---")
-    print(f"Total Processed: {len(final_state.get('final_structs',[]))}")
+    print(f"Total Processed: {len(final_state.get('final_results',[]))}")
     print(f"Total Errors: {len(errors)}")
     print(f"Results saved to {output_file}")
     

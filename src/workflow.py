@@ -3,23 +3,39 @@ import base64
 import io
 import json
 import logging
-from typing import List, Any, Dict, Optional
+import math
+from typing import List, Any, Dict, Annotated ,TypedDict
+import operator
 from pdf2image import convert_from_bytes
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
+from langgraph.types import Send
 
 from src.config import config, logger
 from src.schema import ResumeData
 from src.storage import MinioHandler
 from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE
 
-# -- GRAPH STATE --
-class AgentState(Dict):
-    file_keys: List[str]
-    ocr_results: Dict[str, str] 
-    final_structs: List[Dict[str, Any]]
-    errors: List[str]
+# -- GLOBAL SEMAPHORES --
+ocr_semaphore = asyncio.Semaphore(config.ocr_workers)
+structure_semaphore = asyncio.Semaphore(config.structure_workers)
+
+# -- STATES --
+# 1. State for a BATCH of resumes (One of the 10 branches)
+class BatchState(TypedDict):
+    batch_id: int
+    files_in_batch: List[str]
+    ocr_results: Dict[str, str]
+    # We must explicitly define this key so it gets returned to the parent
+    final_results: List[Dict[str, Any]]
+
+# 2. State for the OVERALL application
+class OverallState(TypedDict):
+    all_files: List[str]
+    # Reducer: Combines lists of results from the 10 branches
+    final_results: Annotated[List[Dict[str, Any]], operator.add]
+    ocr_results: Annotated[List[Dict[str, str]], operator.add]
 
 # -- LLM FACTORY --
 def get_llm(structured: bool = False):
@@ -35,23 +51,26 @@ def get_llm(structured: bool = False):
         return llm.with_structured_output(ResumeData)
     return llm
 
-# -- WORKER 1: OCR --
-async def ocr_worker(minio: MinioHandler, file_key: str, semaphore: asyncio.Semaphore) -> Dict:
-    async with semaphore:
+# -- CORE LOGIC (HELPER FUNCTIONS) --
+# These are called by the nodes. We keep them separate to allow internal parallelism.
+
+async def process_single_ocr(minio, file_key):
+    """Downloads and extracts text from one file."""
+    async with ocr_semaphore: # Wait for slot
         try:
-            logger.info(f"🔹 [OCR] Processing: {file_key}")
+            logger.info(f"🔹 [OCR START] {file_key}")
             pdf_bytes = await minio.download_file_bytes(file_key)
             
-            # 300 DPI as requested
+            # 300 DPI
             images = await asyncio.to_thread(convert_from_bytes, pdf_bytes, fmt='png', dpi=300)
             
             if not images:
-                logger.warning(f"⚠️ [OCR] Empty PDF: {file_key}")
-                return {"file": file_key, "error": "Empty PDF"}
+                return file_key, None
 
-            content_parts = [{"type": "text", "text": OCR_PROMPT}]
             
+            text_result = ""
             for img in images:
+                content_parts = [{"type": "text", "text": OCR_PROMPT}]
                 img_byte_arr = io.BytesIO()
                 img.save(img_byte_arr, format='PNG')
                 img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
@@ -60,118 +79,154 @@ async def ocr_worker(minio: MinioHandler, file_key: str, semaphore: asyncio.Sema
                     "image_url": {"url": f"data:image/png;base64,{img_b64}"}
                 })
 
-            llm = get_llm(structured=False)
-            msg = HumanMessage(content=content_parts)
-            response = await llm.ainvoke([msg])
-            
-            return {"file": file_key, "raw_text": response.content}
-            
-        except Exception as e:
-            logger.error(f"❌ [OCR] Failed {file_key}: {e}")
-            return {"file": file_key, "error": f"OCR Failed: {str(e)}"}
+                llm = get_llm(structured=False)
+                msg = HumanMessage(content=content_parts)
+                response = await llm.ainvoke([msg])
+                text_result += response.content + "\n"
 
-# -- WORKER 2: STRUCTURE (With Retry) --
-async def structure_worker(file_key: str, raw_text: str, semaphore: asyncio.Semaphore) -> Dict:
-    async with semaphore:
-        prompt = STRUCTURE_PROMPT_TEMPLATE.format(raw_text=raw_text)
+            return file_key, text_result
+        except Exception as e:
+            logger.error(f"❌ [OCR ERROR] {file_key}: {e}")
+            return file_key, None
+
+async def process_single_structure(file_key, text):
+    """Structures text for one file."""
+    if not text:
+        return None
+
+    async with structure_semaphore: # Wait for slot
+        prompt = STRUCTURE_PROMPT_TEMPLATE.format(raw_text=text)
         llm = get_llm(structured=True)
         
-        # Retry Logic: 1 initial attempt + 2 retries = 3 total attempts
-        max_attempts = 3
-        
-        for attempt in range(1, max_attempts + 1):
+        for attempt in range(1, 4): # 3 retries ##TODO add this to config file
             try:
-                if attempt > 1:
-                    logger.info(f"🔄 [STRUCT] Retry {attempt-1}/{max_attempts-1} for {file_key}")
-                else:
-                    logger.info(f"🔸 [STRUCT] Extracting: {file_key}")
-                
-                # We send just text here
                 response: ResumeData = await llm.ainvoke([HumanMessage(content=prompt)])
-                
-                # Success
-                return {"file": file_key, "data": response.model_dump(mode='json')}
-            
+                data = response.model_dump(mode='json')
+                data["_source_file"] = file_key
+                logger.info(f"✅ [STRUCT DONE] {file_key}")
+                return data
             except Exception as e:
-                logger.warning(f"⚠️ [STRUCT] Attempt {attempt} failed for {file_key}: {e}")
-                if attempt == max_attempts:
-                    # Final failure
-                    error_msg = f"Structure Failed after {max_attempts} attempts: {str(e)}"
-                    logger.error(f"❌ {error_msg}")
-                    return {
-                        "file": file_key, 
-                        "error": error_msg, 
-                        "fallback_raw_text": raw_text 
-                    }
-                await asyncio.sleep(1 * attempt)
+                if attempt == 3:
+                    logger.error(f"❌ [STRUCT FAILED] {file_key}: {e}")
+                else:
+                    await asyncio.sleep(1 * attempt)
+        return None
 
-# -- GRAPH NODES --
+# -- GRAPH NODES (BATCH LEVEL) --
 
-async def load_resumes_node(state: AgentState):
+async def batch_ocr_node(state: BatchState):
+    """
+    Receives a list of files (e.g., 10 files).
+    Processes them concurrently using the global semaphore.
+    """
+    batch_id = state["batch_id"]
+    files = state["files_in_batch"]
+    logger.info(f"⚙️ [Batch {batch_id}] Starting OCR for {len(files)} files...")
+    
+    minio = MinioHandler()
+    
+    # Run all OCR tasks in this batch concurrently
+    # The global `ocr_semaphore` limits total system load, not this batch alone.
+    tasks = [process_single_ocr(minio, f) for f in files]
+    results = await asyncio.gather(*tasks)
+    
+    # Convert list of tuples to dict, filtering failures
+    ocr_map = {k: v for k, v in results if v is not None}
+    
+    return {"ocr_results": ocr_map}
+
+async def batch_structure_node(state: BatchState):
+    """
+    Receives OCR text for the batch.
+    Processes structure concurrently.
+    """
+    ocr_map = state["ocr_results"]
+    logger.info(f"⚙️ [Batch {state['batch_id']}] Structuring {len(ocr_map)} items...")
+    
+    tasks = [process_single_structure(k, v) for k, v in ocr_map.items()]
+    results = await asyncio.gather(*tasks)
+    
+    valid_results = [r for r in results if r is not None]
+    
+    # We return 'final_results' which matches the Reducer key in OverallState
+    return {"final_results": valid_results , "ocr_results": [ocr_map]}
+
+# -- GRAPH NODES (MAIN LEVEL) --
+
+async def load_and_shard(state: OverallState):
     minio = MinioHandler()
     files = await minio.list_files()
-    logger.info(f"📂 Found {len(files)} resumes.")
-    return {"file_keys": files, "ocr_results": {}, "final_structs": [], "errors": []}
+    logger.info(f"📂 Found {len(files)} total resumes.")
+    return {"all_files": files}
 
-async def ocr_node(state: AgentState):
-    minio = MinioHandler()
-    files = state["file_keys"]
-    sem = asyncio.Semaphore(config.ocr_workers)
+def map_to_batches(state: OverallState):
+    """
+    The Sharding Logic:
+    Splits the list of files into MAX 10 chunks.
+    """
+    files = state["all_files"]
+    total_files = len(files)
     
-    tasks = [ocr_worker(minio, f, sem) for f in files]
-    results = await asyncio.gather(*tasks)
-    
-    ocr_map = {}
-    errors = state.get("errors", [])
-    
-    for r in results:
-        if "error" in r:
-            errors.append(f"OCR Error in {r['file']}: {r['error']}")
-        else:
-            ocr_map[r['file']] = r['raw_text']
-            
-    return {"ocr_results": ocr_map, "errors": errors}
-
-async def structure_node(state: AgentState):
-    ocr_data = state["ocr_results"]
-    sem = asyncio.Semaphore(config.structure_workers)
-    
-    tasks = []
-    for filename, text in ocr_data.items():
-        tasks.append(structure_worker(filename, text, sem))
+    if total_files == 0:
+        return []
         
-    results = await asyncio.gather(*tasks)
+    # Determine number of chunks (Max 10)
+    num_chunks = min(10, total_files)
+    if num_chunks == 0: return []
     
-    final_structs = []
-    errors = state.get("errors", [])
+    # Calculate chunk size (ceil to ensure all are covered)
+    chunk_size = math.ceil(total_files / num_chunks)
     
-    for r in results:
-        if "error" in r:
-            fallback_name = f"fallback_{r['file']}.txt"
-            try:
-                with open(fallback_name, "w", encoding="utf-8") as f:
-                    f.write(r.get("fallback_raw_text", "No text"))
-            except Exception as save_err:
-                logger.error(f"Failed to save fallback: {save_err}")
+    batch_requests = []
+    
+    for i in range(num_chunks):
+        start_idx = i * chunk_size
+        end_idx = start_idx + chunk_size
+        chunk_files = files[start_idx:end_idx]
+        
+        if not chunk_files:
+            continue
             
-            errors.append(f"Structure Error in {r['file']}: {r['error']} (Saved raw to {fallback_name})")
-        else:
-            data = r['data']
-            data['_source_file'] = r['file']
-            final_structs.append(data)
-            
-    return {"final_structs": final_structs, "errors": errors}
+        # Create a Send object for this chunk
+        batch_requests.append(
+            Send("process_batch_subgraph", {
+                "batch_id": i + 1,
+                "files_in_batch": chunk_files,
+                "ocr_results": {},
+                "structured_results": []
+            })
+        )
+    
+    logger.info(f"🔀 Sharded {total_files} files into {len(batch_requests)} batches (Target Max: 10).")
+    return batch_requests
 
 # -- BUILD GRAPH --
+
 def build_graph():
-    workflow = StateGraph(AgentState)
-    workflow.add_node("load", load_resumes_node)
-    workflow.add_node("ocr", ocr_node)
-    workflow.add_node("structure", structure_node)
+    # 1. Subgraph (The Worker Branch)
+    workflow_batch = StateGraph(BatchState)
+    workflow_batch.add_node("batch_ocr", batch_ocr_node)
+    workflow_batch.add_node("batch_structure", batch_structure_node)
     
-    workflow.set_entry_point("load")
-    workflow.add_edge("load", "ocr")
-    workflow.add_edge("ocr", "structure")
-    workflow.add_edge("structure", END)
+    workflow_batch.add_edge(START, "batch_ocr")
+    workflow_batch.add_edge("batch_ocr", "batch_structure")
+    workflow_batch.add_edge("batch_structure", END)
+
+    # 2. Main Graph (The Orchestrator)
+    workflow_main = StateGraph(OverallState)
+    workflow_main.add_node("load_and_shard", load_and_shard)
+    workflow_main.add_node("process_batch_subgraph", workflow_batch.compile())
     
-    return workflow.compile()
+    workflow_main.add_edge(START, "load_and_shard")
+    
+    # Map Step: Distributes lists of files to workers
+    workflow_main.add_conditional_edges(
+        "load_and_shard",
+        map_to_batches,
+        ["process_batch_subgraph"]
+    )
+    
+    # Reduce Step: Collects results
+    workflow_main.add_edge("process_batch_subgraph", END)
+    
+    return workflow_main.compile()

@@ -41,3 +41,5 @@ class Settings(BaseSettings):
 
 # Instantiate the settings
 config = Settings()
+setup_logging()  # Initialize logging
+logger = logging.getLogger("IranHR_Agent")
