@@ -1,0 +1,8 @@
+langchain-google-genai
+langgraph
+pydantic
+pydantic-settings
+pdf2image
+aioboto3
+click
+'pydantic[email]'
