@@ -16,6 +16,14 @@ class MilitaryServiceStatus(str, Enum):
     EDUCATION_EXEMPTION = "Educational Exemption" 
     SUBJECT_TO_SERVICE = "Subject to Service" 
 
+class SeniorityLevel(str, Enum):
+    INTERN = "Intern"
+    JUNIOR = "Junior"
+    MID_LEVEL = "Mid-Level"
+    SENIOR = "Senior"
+    LEAD = "Lead"
+    MANAGER = "Manager"
+
 # ==================================================
 # SUB-MODELS
 # ==================================================
@@ -123,3 +131,31 @@ class ResumeData(BaseModel):
     projects: Optional[Projects] = None
     publications: Optional[Publications] = None
     resume_language: Optional[str] = Field(None, description="Language of the original resume (e.g., 'Persian', 'English').")
+
+# ==================================================
+# Recruitment requirements
+# ==================================================
+
+class HiringRequirements(BaseModel):
+    """The complete profile of the ideal candidate."""
+    role_title: str = Field(..., description="Job Title, e.g. 'Senior Sales Expert'")
+    seniority: SeniorityLevel = Field(..., description="Expected seniority level")
+    
+    # Critical for Iran
+    military_service_required: bool = Field(default=True, description="If True, candidate must have Completed or Exempt status")
+    
+    essential_hard_skills: List[str] = Field(..., description="Must-have technical skills")
+    nice_to_have_skills: List[str] = Field(default_factory=list, description="Bonus skills")
+    
+    soft_skills: Optional[List[str]] = Field(default_factory=list, description="Personality traits, e.g., 'Teamwork', 'Negotiation' (optional)")
+    
+    min_experience_years: int = Field(0, description="Minimum years of relevant work experience")
+    
+    education_level: Optional[str] = Field(None, description="e.g., 'Bachelor in Marketing'")
+    
+    language_requirements: List[str] = Field(
+        default=["Persian (Native)"], 
+        description="e.g., ['English (Fluent)', 'Persian (Native)']"
+    )
+    
+    salary_range_offer: Optional[str] = Field(None, description="Budget for this role (optional)")
