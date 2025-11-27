@@ -173,3 +173,27 @@ class HiringRequirements(BaseModel):
     salary_range_offer: Optional[str] = Field(None, description="Budget for this role (optional)")
 
     weights: PriorityWeights = Field(..., description="Quantified importance of each category")
+
+# ==================================================
+# Resume Evaluator
+# ==================================================
+
+class CategoryScore(BaseModel):
+    score: int = Field(..., description="Score from 0 to 100")
+    reasoning: str = Field(..., description="Short explanation for this score")
+
+class ResumeEvaluation(BaseModel):
+    """The computed scores for a candidate."""
+    hard_skills_score: CategoryScore
+    experience_score: CategoryScore
+    education_score: CategoryScore
+    soft_skills_score: CategoryScore
+    military_status_score: CategoryScore
+    
+    final_weighted_score: float = Field(..., description="Final calculated score based on user weights")
+    summary_explanation: str = Field(..., description="Why this candidate is in the top/bottom")
+
+class ScoredResume(BaseModel):
+    id: Optional[str] = Field(None, alias="_id") # Mongo ID
+    resume: ResumeData
+    evaluation: ResumeEvaluation

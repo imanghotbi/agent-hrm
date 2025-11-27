@@ -1,6 +1,7 @@
 from pydantic import Field , SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import logging
+from urllib.parse import quote_plus
 import sys
 
 def setup_logging():
@@ -16,11 +17,18 @@ class Settings(BaseSettings):
     minio_secret_key: SecretStr
     minio_access_key: str = "hrm_resume"
     
-    # Optional fields with defaults
+    # Optional fields with defaults for minIO
     minio_endpoint: str = "http://5.75.206.1:9000"
     minio_bucket: str = "resumes"
     model_name: str = "gemini-2.5-flash"
     
+    # Mongo Config
+    mongo_endpoint: str
+    mongo_db_name: str
+    mongo_collection: str
+    mongo_username: str
+    mongo_password: SecretStr
+
     ocr_workers: int = Field(default=5, validation_alias="OCR_WORKERS")
     structure_workers: int = Field(default=10, validation_alias="STRUCTURE_WORKERS")
 
@@ -38,6 +46,11 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False # Allows MINIO_ENDPOINT to map to minio_endpoint
     )
+
+    @property
+    def mongo_uri(self):
+        encoded_password = quote_plus(self.mongo_password.get_secret_value())
+        return f"mongodb://{self.mongo_username}:{encoded_password}@{self.mongo_endpoint}"
 
 # Instantiate the settings
 config = Settings()

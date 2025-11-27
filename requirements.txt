@@ -6,3 +6,5 @@ pdf2image
 aioboto3
 click
 'pydantic[email]'
+motor
+pymongo

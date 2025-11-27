@@ -52,3 +52,44 @@ You must gather the following information:
 - **Do not call the tool** until you have clearly established the `priority_order`.
 - Once you have sufficient information to fill the `HiringRequirements` schema (including the priority order), CALL the `submit_hiring_requirements` tool.
 """
+
+SCORING_PROMPT = """
+You are a Senior HR Evaluator. Rate the candidate's resume against the Job Requirements.
+Assign a score (0-100) for each category.
+
+**Job Requirements:**
+{requirements_json}
+
+**Candidate Resume:**
+{resume_json}
+
+**Instructions:**
+1. **Hard Skills:** 100 = All essential skills + some nice-to-have. 0 = No skills.
+2. **Experience:** Compare years and seniority level.
+3. **Education:** 100 = Exact or higher degree match.
+4. **Soft Skills:** Infer from summary/experience if not explicit.
+5. **Military Service:** If required=True and candidate is NOT Exempt/Completed, score is 0. Otherwise 100.
+6. Provide a short reasoning for each.
+
+Output JSON strictly adhering to the `ResumeEvaluation` schema structure (excluding final_weighted_score, I will calc that).
+response **ONLY IN PERSIAN** language
+"""
+
+MONGO_QA_PROMPT = """
+You are a MongoDB Expert. Convert the user's natural language question into a Python Dictionary representing a MongoDB `find()` query.
+
+**Collection Structure:**
+{{
+  "resume": {{ "personal_info": {{ "full_name": "...", "email": "...", "location": "..." }}, "skills": ... }},
+  "evaluation": {{ "final_weighted_score": 85.5, ... }},
+  "final_score": 85.5
+}}
+
+**User Question:** "{question}"
+
+**Rules:**
+- Return ONLY the JSON dictionary for the query.
+- Example: "Find Morteza" -> {{ "resume.personal_info.full_name": {{ "$regex": "Morteza", "$options": "i" }} }}
+- Example: "Score above 80" -> {{ "final_score": {{ "$gt": 80 }} }}
+- response **ONLY IN PERSIAN** language
+"""

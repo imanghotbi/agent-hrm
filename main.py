@@ -5,6 +5,8 @@ from src.storage import MinioHandler
 from src.workflow import build_graph
 from src.config import logger
 from src.agent_hiring import HiringAgent
+from src.matcher import MatcherEngine
+from src.database import MongoHandler
 
 async def main():
     minio = MinioHandler()
@@ -61,6 +63,8 @@ async def main():
     with open("hiring_requirements.json", "w", encoding="utf-8") as f:
         f.write(reqs.model_dump_json(indent=2))
 
+    import time
+    time.sleep(60)
     # 2. Workflow Execution Phase
     logger.info("\n--- ⚡ Step 2: Starting Resume Processing Workflow ---")
     app = build_graph()
@@ -73,19 +77,42 @@ async def main():
     
     # 3. Summary & Save
     errors = final_state.get("errors", []) 
-    
+    structured_resumes = final_state.get("final_results", [])
     # Save to JSON file
-    output_file = "parsed_resumes.json"
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(final_state, f, ensure_ascii=False, indent=2)
+    if not structured_resumes:
+        logger.error("No resumes processed.")
+        return
         
-    print("\n--- 🏁 Execution Finished ---")
-    print(f"Total Processed: {len(final_state.get('final_results',[]))}")
-    print(f"Total Errors: {len(errors)}")
-    print(f"Results saved to {output_file}")
-    
-    if errors:
-        print("Check 'errors' list in logs for failed files.")
+    logger.info("\n--- ⚖️ Step 3: Scoring & Storing ---")
+    matcher = MatcherEngine()
+    mongo = MongoHandler()
+    for resume in structured_resumes:
+        # Calculate Score
+        evaluation = await matcher.evaluate_resume(resume, reqs)
+        
+        # Save to Mongo
+        await mongo.save_candidate(resume, evaluation)
+        
+    # --- PHASE 5: TOP CANDIDATES ---
+    logger.info("\n--- 🏆 Top 5 Candidates ---")
+    top_5 = await mongo.get_top_candidates(5)
+    for i, cand in enumerate(top_5, 1):
+        info = cand['resume']['personal_info']
+        score = cand['final_score']
+        print(f"{i}. {info.get('full_name')} | Score: {score}/100")
+        print(f"   Reason: {cand['evaluation']['summary_explanation']}")
+        print("   ---")
 
+    # --- PHASE 6: Q&A SYSTEM ---
+    logger.info("\n--- 💬 Database Q&A (Type 'exit' to quit) ---")
+    print("Ask questions about the resumes (e.g., 'Who knows Python?', 'Is Morteza here?').")
+    
+    while True:
+        q = input("\n❓ Question: ").strip()
+        if q.lower() in ["exit", "quit"]:
+            break
+            
+        answer = await matcher.run_qa(q)
+        print(f"🤖 Answer: {answer}")
 if __name__ == "__main__":
     asyncio.run(main())

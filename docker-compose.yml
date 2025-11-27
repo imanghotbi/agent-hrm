@@ -14,3 +14,15 @@ services:
     command: server /data --console-address ":9001" --address ":9000"
     volumes:
       - ./minio_data:/data
+
+  mongo:
+    image: mongo:latest
+    container_name: mongo_server
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - ./mongo_data:/data/db
