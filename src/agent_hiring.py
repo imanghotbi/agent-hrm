@@ -3,8 +3,9 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
 from src.config import config, logger
-from src.schema import HiringRequirements , SeniorityLevel
+from src.schema import HiringRequirements , SeniorityLevel , PriorityWeights
 from utils.prompt import HIRING_AGENT_PROMPT
+from langchain_core.output_parsers import StrOutputParser
 
 
 class HiringAgent:
@@ -26,6 +27,7 @@ class HiringAgent:
                                    military_service_required: bool, 
                                    min_experience_years: int, 
                                    education_level:str,
+                                   weights: PriorityWeights,
                                    nice_to_have_skills:Optional[List[str]],
                                    language_proficiency:Optional[str],
                                    **kwargs):
@@ -69,5 +71,6 @@ class HiringAgent:
                         return retry_response.content
 
         # Normal conversation response
-        self.messages.append(response)
-        return response.content
+        response_text = await StrOutputParser().ainvoke(response)
+        self.messages.append(AIMessage(content=response_text))
+        return response_text

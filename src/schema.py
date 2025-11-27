@@ -136,6 +136,18 @@ class ResumeData(BaseModel):
 # Recruitment requirements
 # ==================================================
 
+class PriorityWeights(BaseModel):
+    """
+    User's quantified preference for each category (1-10).
+    1 = Not important, 10 = Vital/Deal-breaker.
+    """
+    hard_skills_weight: int = Field(..., ge=1, le=10, description="Importance of Technical Skills (1-10)")
+    experience_weight: int = Field(..., ge=1, le=10, description="Importance of Years of Experience & Seniority (1-10)")
+    education_weight: int = Field(..., ge=1, le=10, description="Importance of University Degree/Field (1-10)")
+    soft_skills_weight: int = Field(..., ge=1, le=10, description="Importance of Soft Skills/Culture Fit (1-10)")
+    military_status_weight: int = Field(default=5, ge=1, le=10, description="Importance of Military Service Status (1-10)")
+
+
 class HiringRequirements(BaseModel):
     """The complete profile of the ideal candidate."""
     role_title: str = Field(..., description="Job Title, e.g. 'Senior Sales Expert'")
@@ -159,3 +171,5 @@ class HiringRequirements(BaseModel):
     )
     
     salary_range_offer: Optional[str] = Field(None, description="Budget for this role (optional)")
+
+    weights: PriorityWeights = Field(..., description="Quantified importance of each category")
