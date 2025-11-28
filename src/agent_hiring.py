@@ -3,7 +3,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
 from src.config import config, logger
-from src.schema import HiringRequirements , SeniorityLevel , PriorityWeights
+from src.schemas.hiring import HiringRequirements , SeniorityLevel , PriorityWeights
 from utils.prompt import HIRING_AGENT_PROMPT
 from langchain_core.output_parsers import StrOutputParser
 

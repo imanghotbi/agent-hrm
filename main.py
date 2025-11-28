@@ -5,8 +5,11 @@ from src.storage import MinioHandler
 from src.workflow import build_graph
 from src.config import logger
 from src.agent_hiring import HiringAgent
-from src.matcher import MatcherEngine
+from src.matcher import MongoRetriver
 from src.database import MongoHandler
+from src.config import config
+from utils.extract_structure import ExtractSchema
+import random
 
 async def main():
     minio = MinioHandler()
@@ -64,38 +67,41 @@ async def main():
         f.write(reqs.model_dump_json(indent=2))
 
     import time
-    time.sleep(60)
+    time.sleep(30) ## TODO remove later
     # 2. Workflow Execution Phase
     logger.info("\n--- ⚡ Step 2: Starting Resume Processing Workflow ---")
     app = build_graph()
     
     # Initial state
-    inputs = {"file_keys": [], "results": [], "errors": []}
+    inputs = {
+        "all_files": [], 
+        "hiring_reqs": reqs, # Inject requirements
+        "final_results": []
+    }
     
     # Run the graph
     final_state = await app.ainvoke(inputs)
     
     # 3. Summary & Save
     errors = final_state.get("errors", []) 
-    structured_resumes = final_state.get("final_results", [])
+    structured_resumes = final_state.get("evaluated_results", [])
     # Save to JSON file
     if not structured_resumes:
         logger.error("No resumes processed.")
         return
         
-    logger.info("\n--- ⚖️ Step 3: Scoring & Storing ---")
-    matcher = MatcherEngine()
+    logger.info(f"💾 Saving {len(structured_resumes)} scored candidates to DB...")
     mongo = MongoHandler()
     for resume in structured_resumes:
-        # Calculate Score
-        evaluation = await matcher.evaluate_resume(resume, reqs)
-        
         # Save to Mongo
-        await mongo.save_candidate(resume, evaluation)
+        await mongo.save_candidate(resume)
         
     # --- PHASE 5: TOP CANDIDATES ---
     logger.info("\n--- 🏆 Top 5 Candidates ---")
     top_5 = await mongo.get_top_candidates(5)
+    extract_schema = ExtractSchema(config.mongo_uri,config.mongo_db_name , config.mongo_collection)
+    doc = random.choice(top_5)
+    structure = extract_schema.generate_schema(doc)
     for i, cand in enumerate(top_5, 1):
         info = cand['resume']['personal_info']
         score = cand['final_score']
@@ -111,8 +117,8 @@ async def main():
         q = input("\n❓ Question: ").strip()
         if q.lower() in ["exit", "quit"]:
             break
-            
-        answer = await matcher.run_qa(q)
+        q_a = MongoRetriver()
+        answer = await q_a.run_qa(q,structure)
         print(f"🤖 Answer: {answer}")
 if __name__ == "__main__":
     asyncio.run(main())

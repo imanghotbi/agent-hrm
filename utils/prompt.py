@@ -72,18 +72,13 @@ Assign a score (0-100) for each category.
 6. Provide a short reasoning for each.
 
 Output JSON strictly adhering to the `ResumeEvaluation` schema structure (excluding final_weighted_score, I will calc that).
-response **ONLY IN PERSIAN** language
 """
 
 MONGO_QA_PROMPT = """
 You are a MongoDB Expert. Convert the user's natural language question into a Python Dictionary representing a MongoDB `find()` query.
 
 **Collection Structure:**
-{{
-  "resume": {{ "personal_info": {{ "full_name": "...", "email": "...", "location": "..." }}, "skills": ... }},
-  "evaluation": {{ "final_weighted_score": 85.5, ... }},
-  "final_score": 85.5
-}}
+{structure}
 
 **User Question:** "{question}"
 

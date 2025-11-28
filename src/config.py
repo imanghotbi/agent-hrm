@@ -31,14 +31,11 @@ class Settings(BaseSettings):
 
     ocr_workers: int = Field(default=5, validation_alias="OCR_WORKERS")
     structure_workers: int = Field(default=10, validation_alias="STRUCTURE_WORKERS")
-
+    eval_workers: int = Field(default=10, validation_alias="EVAL_WORKERS")
     # LLM Parameters
     max_tokens: int = 20000
     top_p: float = 0.0
     thinking_budget: int = 5000
-
-    # We map the .env variable 'MAX_CONCURRENT_WORKERS' to this attribute
-    max_workers: int = Field(default=5, validation_alias="MAX_CONCURRENT_WORKERS")
 
     # Configuration to load from .env file
     model_config = SettingsConfigDict(

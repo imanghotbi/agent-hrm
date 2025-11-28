@@ -1,8 +1,6 @@
 import asyncio
 import base64
 import io
-import json
-import logging
 import math
 from typing import List, Any, Dict, Annotated ,TypedDict
 import operator
@@ -13,13 +11,20 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.types import Send
 
 from src.config import config, logger
-from src.schema import ResumeData
+from src.schemas.resume import ResumeData
+from src.schemas.hiring import HiringRequirements
 from src.storage import MinioHandler
-from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE
+from src.schemas.evaluation import ResumeEvaluation, ScoredResume
+from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT
 
 # -- GLOBAL SEMAPHORES --
 ocr_semaphore = asyncio.Semaphore(config.ocr_workers)
 structure_semaphore = asyncio.Semaphore(config.structure_workers)
+eval_semaphore = asyncio.Semaphore(config.eval_workers)
+
+def _keep_first(a, b):
+    # When multiple values come in, keep the first one.
+    return a
 
 # -- STATES --
 # 1. State for a BATCH of resumes (One of the 10 branches)
@@ -27,14 +32,17 @@ class BatchState(TypedDict):
     batch_id: int
     files_in_batch: List[str]
     ocr_results: Dict[str, str]
+    structured_results: List[Dict[str, Any]]
+    hiring_reqs: HiringRequirements
     # We must explicitly define this key so it gets returned to the parent
-    final_results: List[Dict[str, Any]]
+    evaluated_results: List[Dict[str, Any]]
 
 # 2. State for the OVERALL application
 class OverallState(TypedDict):
     all_files: List[str]
+    hiring_reqs: Annotated[HiringRequirements , _keep_first]
     # Reducer: Combines lists of results from the 10 branches
-    final_results: Annotated[List[Dict[str, Any]], operator.add]
+    evaluated_results: Annotated[List[Dict[str, Any]], operator.add]
     ocr_results: Annotated[List[Dict[str, str]], operator.add]
 
 # -- LLM FACTORY --
@@ -112,6 +120,64 @@ async def process_single_structure(file_key, text):
                     await asyncio.sleep(1 * attempt)
         return None
 
+async def process_single_evaluation(resume_dict: Dict, reqs: HiringRequirements):
+    """
+    1. Calls LLM to get component scores.
+    2. Calculates Weighted Average.
+    """
+    async with eval_semaphore:
+        try:
+            # Reconstruct Pydantic object for validation
+            resume_obj = ResumeData(**resume_dict)
+            file_key = resume_dict.get("_source_file", "unknown")
+            
+            req_json = reqs.model_dump_json()
+            res_json = resume_obj.model_dump_json()
+            
+            prompt = SCORING_PROMPT.format(requirements_json=req_json, resume_json=res_json)
+            
+            llm = ChatGoogleGenerativeAI(
+                model=config.model_name,
+                google_api_key=config.google_api_key,
+                temperature=0
+            ).with_structured_output(ResumeEvaluation)
+
+            # 1. Get raw scores
+            eval_result: ResumeEvaluation = await llm.ainvoke([HumanMessage(content=prompt)])
+            
+            # 2. Calculate Weighted Score
+            weights = reqs.weights
+            
+            # Simple dot product
+            weighted_sum = (
+                (eval_result.hard_skills_score.score * weights.hard_skills_weight) +
+                (eval_result.experience_score.score * weights.experience_weight) +
+                (eval_result.education_score.score * weights.education_weight) +
+                (eval_result.soft_skills_score.score * weights.soft_skills_weight) +
+                (eval_result.military_status_score.score * weights.military_status_weight)
+            )
+            
+            total_weight = (
+                weights.hard_skills_weight + weights.experience_weight + 
+                weights.education_weight + weights.soft_skills_weight + 
+                weights.military_status_weight
+            )
+            
+            final_score = round(weighted_sum / total_weight, 2)
+            eval_result.final_weighted_score = final_score
+            
+            logger.info(f"⚖️ [EVAL DONE] {file_key} -> {final_score}")
+            
+            # Return combined structure for Mongo
+            return {
+                "resume": resume_dict,
+                "evaluation": eval_result.model_dump(),
+                "final_score": final_score
+            }
+
+        except Exception as e:
+            logger.error(f"❌ [EVAL ERROR] {resume_dict.get('_source_file')}: {e}")
+            return None
 # -- GRAPH NODES (BATCH LEVEL) --
 
 async def batch_ocr_node(state: BatchState):
@@ -149,7 +215,24 @@ async def batch_structure_node(state: BatchState):
     valid_results = [r for r in results if r is not None]
     
     # We return 'final_results' which matches the Reducer key in OverallState
-    return {"final_results": valid_results , "ocr_results": [ocr_map]}
+    return {"structured_results": valid_results , "ocr_results": [ocr_map]}
+
+async def batch_evaluate_node(state: BatchState):
+    structured_list = state["structured_results"]
+    reqs = state["hiring_reqs"]
+    batch_id = state["batch_id"]
+    
+    if not structured_list:
+        return {"evaluated_results": []}
+
+    logger.info(f"🧠 [Batch {batch_id}] Evaluating {len(structured_list)} resumes...")
+    
+    tasks = [process_single_evaluation(r, reqs) for r in structured_list]
+    results = await asyncio.gather(*tasks)
+    
+    valid_results = [r for r in results if r is not None]
+    
+    return {"evaluated_results": valid_results}
 
 # -- GRAPH NODES (MAIN LEVEL) --
 
@@ -165,6 +248,7 @@ def map_to_batches(state: OverallState):
     Splits the list of files into MAX 10 chunks.
     """
     files = state["all_files"]
+    reqs = state["hiring_reqs"]
     total_files = len(files)
     
     if total_files == 0:
@@ -192,8 +276,10 @@ def map_to_batches(state: OverallState):
             Send("process_batch_subgraph", {
                 "batch_id": i + 1,
                 "files_in_batch": chunk_files,
+                "hiring_reqs": reqs,
                 "ocr_results": {},
-                "structured_results": []
+                "structured_results": [],
+                "evaluated_results": []
             })
         )
     
@@ -203,30 +289,31 @@ def map_to_batches(state: OverallState):
 # -- BUILD GRAPH --
 
 def build_graph():
-    # 1. Subgraph (The Worker Branch)
+    # 1. Subgraph
     workflow_batch = StateGraph(BatchState)
     workflow_batch.add_node("batch_ocr", batch_ocr_node)
     workflow_batch.add_node("batch_structure", batch_structure_node)
+    workflow_batch.add_node("batch_evaluate", batch_evaluate_node) # NEW
     
     workflow_batch.add_edge(START, "batch_ocr")
     workflow_batch.add_edge("batch_ocr", "batch_structure")
-    workflow_batch.add_edge("batch_structure", END)
+    workflow_batch.add_edge("batch_structure", "batch_evaluate")
+    workflow_batch.add_edge("batch_evaluate", END)
 
-    # 2. Main Graph (The Orchestrator)
+    # 2. Main Graph
     workflow_main = StateGraph(OverallState)
     workflow_main.add_node("load_and_shard", load_and_shard)
     workflow_main.add_node("process_batch_subgraph", workflow_batch.compile())
     
     workflow_main.add_edge(START, "load_and_shard")
     
-    # Map Step: Distributes lists of files to workers
+    # Conditional Map
     workflow_main.add_conditional_edges(
         "load_and_shard",
         map_to_batches,
         ["process_batch_subgraph"]
     )
     
-    # Reduce Step: Collects results
     workflow_main.add_edge("process_batch_subgraph", END)
     
     return workflow_main.compile()

@@ -16,17 +16,10 @@ class MilitaryServiceStatus(str, Enum):
     EDUCATION_EXEMPTION = "Educational Exemption" 
     SUBJECT_TO_SERVICE = "Subject to Service" 
 
-class SeniorityLevel(str, Enum):
-    INTERN = "Intern"
-    JUNIOR = "Junior"
-    MID_LEVEL = "Mid-Level"
-    SENIOR = "Senior"
-    LEAD = "Lead"
-    MANAGER = "Manager"
-
 # ==================================================
 # SUB-MODELS
 # ==================================================
+
 class PersonalInfo(BaseModel):
     """Basic candidate contact and demographic details."""
     full_name: Optional[str] = Field(None, description="Candidate's full legal name.")
@@ -133,67 +126,3 @@ class ResumeData(BaseModel):
     resume_language: Optional[str] = Field(None, description="Language of the original resume (e.g., 'Persian', 'English').")
 
 # ==================================================
-# Recruitment requirements
-# ==================================================
-
-class PriorityWeights(BaseModel):
-    """
-    User's quantified preference for each category (1-10).
-    1 = Not important, 10 = Vital/Deal-breaker.
-    """
-    hard_skills_weight: int = Field(..., ge=1, le=10, description="Importance of Technical Skills (1-10)")
-    experience_weight: int = Field(..., ge=1, le=10, description="Importance of Years of Experience & Seniority (1-10)")
-    education_weight: int = Field(..., ge=1, le=10, description="Importance of University Degree/Field (1-10)")
-    soft_skills_weight: int = Field(..., ge=1, le=10, description="Importance of Soft Skills/Culture Fit (1-10)")
-    military_status_weight: int = Field(default=5, ge=1, le=10, description="Importance of Military Service Status (1-10)")
-
-
-class HiringRequirements(BaseModel):
-    """The complete profile of the ideal candidate."""
-    role_title: str = Field(..., description="Job Title, e.g. 'Senior Sales Expert'")
-    seniority: SeniorityLevel = Field(..., description="Expected seniority level")
-    
-    # Critical for Iran
-    military_service_required: bool = Field(default=True, description="If True, candidate must have Completed or Exempt status")
-    
-    essential_hard_skills: List[str] = Field(..., description="Must-have technical skills")
-    nice_to_have_skills: List[str] = Field(default_factory=list, description="Bonus skills")
-    
-    soft_skills: Optional[List[str]] = Field(default_factory=list, description="Personality traits, e.g., 'Teamwork', 'Negotiation' (optional)")
-    
-    min_experience_years: int = Field(0, description="Minimum years of relevant work experience")
-    
-    education_level: Optional[str] = Field(None, description="e.g., 'Bachelor in Marketing'")
-    
-    language_requirements: List[str] = Field(
-        default=["Persian (Native)"], 
-        description="e.g., ['English (Fluent)', 'Persian (Native)']"
-    )
-    
-    salary_range_offer: Optional[str] = Field(None, description="Budget for this role (optional)")
-
-    weights: PriorityWeights = Field(..., description="Quantified importance of each category")
-
-# ==================================================
-# Resume Evaluator
-# ==================================================
-
-class CategoryScore(BaseModel):
-    score: int = Field(..., description="Score from 0 to 100")
-    reasoning: str = Field(..., description="Short explanation for this score")
-
-class ResumeEvaluation(BaseModel):
-    """The computed scores for a candidate."""
-    hard_skills_score: CategoryScore
-    experience_score: CategoryScore
-    education_score: CategoryScore
-    soft_skills_score: CategoryScore
-    military_status_score: CategoryScore
-    
-    final_weighted_score: float = Field(..., description="Final calculated score based on user weights")
-    summary_explanation: str = Field(..., description="Why this candidate is in the top/bottom")
-
-class ScoredResume(BaseModel):
-    id: Optional[str] = Field(None, alias="_id") # Mongo ID
-    resume: ResumeData
-    evaluation: ResumeEvaluation
