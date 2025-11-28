@@ -28,27 +28,28 @@ class MongoRetriver:
             # Helper to get raw JSON
             raw_response = await self.llm.ainvoke([HumanMessage(content=query_msg)])
             query_dict = query_parser.parse(raw_response.content)
-            
+            query = query_dict.get('query',None)
+            projection = query_dict.get('projection' , None)
             logger.info(f"🔍 Generated Mongo Query: {query_dict}")
             
             # Step 2: Execute
-            results = await self.mongo.execute_raw_query(query_dict)
+            results = await self.mongo.execute_raw_query(query = query , projection=projection)
             
             if not results:
                 return "I searched the database but found no matching candidates."
             
-            # Step 3: Synthesize Answer
+            # Step 3: Synthesize Answer ##TODO remove this 
             # We summarize the findings for the LLM to describe
-            summary = [
-                f"- Name: {r['resume']['personal_info'].get('full_name', 'Unknown')}, "
-                f"Score: {r.get('final_score')}, "
-                f"Location: {r['resume']['personal_info'].get('location')}"
-                for r in results
-            ]
+            # summary = [
+            #     f"- Name: {r['resume']['personal_info'].get('full_name', 'Unknown')}, "
+            #     f"Score: {r.get('final_score')}, "
+            #     f"Location: {r['resume']['personal_info'].get('location')}"
+            #     for r in results
+            # ]
             
             ans_prompt = (
                 f"User Question: {user_question}\n\n"
-                f"Database Results:\n{str(summary)}\n\n"
+                f"Database Results:\n{str(results)}\n\n"
                 "Answer the user's question based on these results in Persian."
             )
             

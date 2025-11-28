@@ -14,10 +14,10 @@ class MongoHandler:
     async def save_candidate(self, resume_data: dict):
         """Saves or updates a candidate."""
         # We use email or a hash as a unique identifier to avoid duplicates
-        email = resume_data.get("personal_info", {}).get("email")
+        email = resume_data.get('resume').get("personal_info", {}).get("email")
         if not email:
             # Fallback if no email: use filename or full name
-            query = {"_source_file": resume_data.get("_source_file")}
+            query = {"_source_file": resume_data.get('resume').get("_source_file")}
         else:
             query = {"resume.personal_info.email": email}
         
@@ -29,8 +29,8 @@ class MongoHandler:
         cursor = self.collection.find().sort("final_score", DESCENDING).limit(limit)
         return await cursor.to_list(length=limit)
 
-    async def execute_raw_query(self, query_dict: dict):
+    async def execute_raw_query(self, query: dict , projection: dict = None):
         """Executes a generated query (for the Q&A feature)."""
 
-        cursor = self.collection.find(query_dict)
+        cursor = self.collection.find(query , projection)
         return await cursor.to_list(length=10)

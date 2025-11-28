@@ -83,8 +83,11 @@ You are a MongoDB Expert. Convert the user's natural language question into a Py
 **User Question:** "{question}"
 
 **Rules:**
-- Return ONLY the JSON dictionary for the query.
-- Example: "Find Morteza" -> {{ "resume.personal_info.full_name": {{ "$regex": "Morteza", "$options": "i" }} }}
-- Example: "Score above 80" -> {{ "final_score": {{ "$gt": 80 }} }}
-- response **ONLY IN PERSIAN** language
+- Return ONLY the JSON dictionary for the query NOTHING ELSE.
+- Do not translate names or items mentioned in the query. For example, if you are told to search for people in تهران, you should search for the word "تهران" and not "Tehran".
+- Just retrive field you need based on question not all feild
+- Search for fields with string data type as contains unless explicitly stated otherwise in the request.
+- Example: "Find the final score of people whose name is مرتضی." -> {{ "query" : {{ "resume.personal_info.full_name": {{ "$regex": "مرتضی", "$options": "i" }}}} , "projection":{{"_id": 0, "final_score": 1}}}}
+- Example: "Give me name of people score above 80" -> {{ "query" : {{ "final_score": {{ "$gt": 80 }} }} , "projection":{{"_id": 0, "resume.personal_info.full_name": 1}}}}
+- Example: "Count people live in Tehran" -> {{ "query" : {{'resume.personal_info.location': {{'$regex': 'Tehran', '$options': 'i'}}}} , "projection":{{"_id": 1}}}}
 """

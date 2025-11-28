@@ -112,12 +112,11 @@ async def main():
     # --- PHASE 6: Q&A SYSTEM ---
     logger.info("\n--- 💬 Database Q&A (Type 'exit' to quit) ---")
     print("Ask questions about the resumes (e.g., 'Who knows Python?', 'Is Morteza here?').")
-    
+    q_a = MongoRetriver()
     while True:
         q = input("\n❓ Question: ").strip()
         if q.lower() in ["exit", "quit"]:
             break
-        q_a = MongoRetriver()
         answer = await q_a.run_qa(q,structure)
         print(f"🤖 Answer: {answer}")
 if __name__ == "__main__":
