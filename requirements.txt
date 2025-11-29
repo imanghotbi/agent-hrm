@@ -8,3 +8,4 @@ click
 'pydantic[email]'
 motor
 pymongo
+jdatetime

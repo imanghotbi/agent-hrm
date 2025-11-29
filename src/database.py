@@ -2,7 +2,7 @@ import logging
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import DESCENDING
 from src.config import config
-
+from utils.process_stracutre import enrich_resume_with_durations , fix_age_field
 logger = logging.getLogger(__name__)
 
 class MongoHandler:
@@ -20,7 +20,8 @@ class MongoHandler:
             query = {"_source_file": resume_data.get('resume').get("_source_file")}
         else:
             query = {"resume.personal_info.email": email}
-        
+        resume_data = enrich_resume_with_durations(resume_data)
+        resume_data = fix_age_field(resume_data)
         await self.collection.update_one(query, {"$set": resume_data}, upsert=True)
         logger.info(f"💾 Saved candidate to DB: {resume_data['final_score']:.1f}/100")
 

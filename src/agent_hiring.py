@@ -28,6 +28,7 @@ class HiringAgent:
                                    min_experience_years: int, 
                                    education_level:str,
                                    weights: PriorityWeights,
+                                   university_tier:int,
                                    nice_to_have_skills:Optional[List[str]],
                                    language_proficiency:Optional[str],
                                    **kwargs):

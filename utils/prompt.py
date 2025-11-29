@@ -13,7 +13,17 @@ STRUCTURE_PROMPT_TEMPLATE = (
     "You are an expert CV parser regarding Iranian culture and Resume Styles. "
     "Extract details from the following Resume text into the structured JSON format. "
     "Write in Persian as much as possible in the fields that can be written. "
+    "Write all start and end date like this yyyy-mm (1404-12 , 2025-01) If the end date is written as present or similar, enter present in the End Date field."
     "For Military Service (Sarbazi), look for keywords like 'Payan Khedmat', 'Maafiat', 'Mashmool'. "
+    "detect Gender from name If gender was not explicitly mentioned, identify the gender from the name."
+    "Consider military service status as Exempted by default for women."
+    "Follow the rules below to rank universities:" 
+    "Classification Logic:"
+        "1. Tier 1 (Elite): Sharif, Univ of Tehran, Amirkabir (Polytechnic), IUST, Shahid Beheshti, Tarbiat Modares, Tehran Medical. (Implies top 1% entrance exam rank)."
+        "2. Tier 2 (Top Provincial): Isfahan UT, Shiraz Univ, Ferdowsi Mashhad, Tabriz Univ, KNTU."
+        "3. Tier 3 (Standard): Azad University (ONLY Science & Research or Tehran branches), Gilan, Mazandaran, Yazd."
+        "4. Tier 4 (Mass Ed): Payame Noor (PNU), Applied Science (Elmi-Karbordi), Azad (Provincial/Small branches), Non-profit institutes."
+        "CRITICAL RULE: If the university is 'Islamic Azad University', you must check the specific branch. 'Science and Research' is Tier 3. Small town branches are Tier 4."
     "Strictly adhere to the schema.\n\n"
     "RESUME TEXT:\n{raw_text}"
 )
@@ -25,18 +35,18 @@ Your goal is to gather specific hiring requirements from the user for a new job 
 You must gather the following information:
 1. Job Title & Seniority Level (Intern to Lead/Manager)
 2. Essential Hard Skills (Technologies, Tools)
-3. Nice to have skills/Bonus skills (optional)
+3. Skills that are considered an advantage.(Nice to have skills/Bonus skills)
 4. Minimum Years of Experience
 5. Military Service Requirements (For male candidates in Iran: Completed/Exempt is usually required for full-time jobs)
 6. Education level
-7. Language Proficiency (English level, etc.) (optional)
-8. Salary range offer/Budget for this role (optional)
+7. Soft skills that a job seeker must have (The user can leave this blank.)
 
 **CRITICAL - SCORING STEP (WEIGHTS):**
 9. **Importance Scoring (1-10):** After gathering the requirements, you MUST ask the user to rate the importance of the following 5 factors on a scale of 1 to 10 (where 10 is most critical):
    - Hard Skills
-   - Experience
+   - Experience and Seniority Level
    - Education
+   - University Tier
    - Soft Skills
    - Military Service
    
@@ -65,11 +75,12 @@ Assign a score (0-100) for each category.
 
 **Instructions:**
 1. **Hard Skills:** 100 = All essential skills + some nice-to-have. 0 = No skills.
-2. **Experience:** Compare years and seniority level.
+2. **Experience:** Compare years and seniority level.Of course, experience related to the requested field should be the final scoring criterion.
 3. **Education:** 100 = Exact or higher degree match.
-4. **Soft Skills:** Infer from summary/experience if not explicit.
-5. **Military Service:** If required=True and candidate is NOT Exempt/Completed, score is 0. Otherwise 100.
-6. Provide a short reasoning for each.
+4. **University Tier** 100 = Tier 1 , 0 =  Tier 4
+5. **Soft Skills:** Infer from summary/experience if not explicit.
+6. **Military Service:** If required=True and candidate is NOT Exempt/Completed, score is 0. Otherwise 100.
+7. Provide a short reasoning for each.
 
 Output JSON strictly adhering to the `ResumeEvaluation` schema structure (excluding final_weighted_score, I will calc that).
 """

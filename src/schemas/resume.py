@@ -16,6 +16,12 @@ class MilitaryServiceStatus(str, Enum):
     EDUCATION_EXEMPTION = "Educational Exemption" 
     SUBJECT_TO_SERVICE = "Subject to Service" 
 
+class TierRank(str, Enum):
+    TIER_1 = "Tier 1: Elite (Ivy League Equivalent)"
+    TIER_2 = "Tier 2: Top Provincial/Specialized"
+    TIER_3 = "Tier 3: Standard State & Top Azad"
+    TIER_4 = "Tier 4: Mass Education"
+    UNKNOWN = "Unknown/Foreign"
 # ==================================================
 # SUB-MODELS
 # ==================================================
@@ -56,6 +62,7 @@ class EducationEntry(BaseModel):
     degree: Optional[str] = Field(None, description="B.Sc, M.Sc, PhD, Diploma, etc.")
     major: Optional[str] = Field(None, description="Field of study (e.g., Software Engineering).")
     school: Optional[str] = Field(None, description="University or Institution name.")
+    university_tier: Optional[int] = Field(None, description="The prestige rank of the Iranian university on a scale of 1 to 4.Return null if the university is foreign or unknown.")
     location: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None

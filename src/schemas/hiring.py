@@ -21,6 +21,7 @@ class PriorityWeights(BaseModel):
     experience_weight: int = Field(..., ge=1, le=10)
     education_weight: int = Field(..., ge=1, le=10)
     soft_skills_weight: int = Field(..., ge=1, le=10)
+    university_tier_weight: int = Field(..., ge=1, le=10)
     military_status_weight: int = Field(default=5, ge=1, le=10)
 
 # ==================================================
@@ -35,6 +36,5 @@ class HiringRequirements(BaseModel):
     soft_skills: Optional[List[str]] = []
     min_experience_years: int = 0
     education_level: Optional[str] = None
-    language_requirements: List[str] = ["Persian (Native)"]
-    salary_range_offer: Optional[str] = None
+    university_tier: int
     weights: PriorityWeights

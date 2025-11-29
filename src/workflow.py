@@ -154,13 +154,14 @@ async def process_single_evaluation(resume_dict: Dict, reqs: HiringRequirements)
                 (eval_result.experience_score.score * weights.experience_weight) +
                 (eval_result.education_score.score * weights.education_weight) +
                 (eval_result.soft_skills_score.score * weights.soft_skills_weight) +
-                (eval_result.military_status_score.score * weights.military_status_weight)
+                (eval_result.military_status_score.score * weights.military_status_weight) + 
+                (eval_result.university_tier_score.score * weights.university_tier_weight)
             )
             
             total_weight = (
                 weights.hard_skills_weight + weights.experience_weight + 
                 weights.education_weight + weights.soft_skills_weight + 
-                weights.military_status_weight
+                weights.military_status_weight + weights.university_tier_weight
             )
             
             final_score = round(weighted_sum / total_weight, 2)
