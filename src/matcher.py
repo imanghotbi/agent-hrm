@@ -1,61 +1,111 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import JsonOutputParser
+import json
+from typing import Annotated, TypedDict, List
 
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.graph.message import add_messages
+from langchain_core.output_parsers import StrOutputParser
 from src.config import config, logger
 from src.database import MongoHandler
-from utils.prompt import  MONGO_QA_PROMPT
+from utils.prompt import QA_AGENT_SYSTEM_PROMPT
 
 
-class MongoRetriver:
-    def __init__(self):
+class AgentState(TypedDict):
+    messages: Annotated[List[BaseMessage], add_messages]
+
+class ResumeQAAgent:
+    def __init__(self, db_structure: dict):
+        self.db_structure = db_structure
+        self.mongo = MongoHandler()
+        
+        # -- DEFINE TOOLS --
+        # We define the tool inside to bind it to the specific mongo instance
+        @tool
+        async def search_database(query: str, projection: str = None):
+            """
+            Executes a MongoDB find query.
+            Args:
+                query: JSON string of the query filter (e.g. '{"final_score": {"$gt": 80}}').
+                projection: JSON string of fields to return (optional).
+            """
+            try:
+                # 1. Parse JSON inputs from the LLM
+                query_dict = json.loads(query)
+                proj_dict = json.loads(projection) if projection else None
+                
+                logger.info(f"🔍 Agent Executing Query: {query_dict}")
+                
+                # 2. Execute via MongoHandler
+                results = await self.mongo.execute_raw_query(query_dict, proj_dict)
+                
+                if not results:
+                    return "Database returned: No documents found."
+                
+                return f"Database Results: {str(results)}"
+                
+            except json.JSONDecodeError:
+                return "Error: Invalid JSON format in query. Please fix quotes and brackets."
+            except Exception as e:
+                return f"Database Error: {str(e)}"
+
+        self.tools = [search_database]
+        
+        # -- INITIALIZE LLM --
         self.llm = ChatGoogleGenerativeAI(
             model=config.model_name,
-            google_api_key=config.google_api_key,
+            google_api_key=config.google_api_key.get_secret_value(),
             temperature=0
-        )
-        self.mongo = MongoHandler()
+        ).bind_tools(self.tools)
 
-    async def run_qa(self, user_question: str , db_structure) -> str:
+        # -- BUILD GRAPH --
+        workflow = StateGraph(AgentState)
+        
+        # Nodes
+        workflow.add_node("agent", self.call_model)
+        workflow.add_node("tools", ToolNode(self.tools))
+        
+        # Edges
+        workflow.add_edge(START, "agent")
+        # 'tools_condition' checks if the LLM wants to call a tool or finish
+        workflow.add_conditional_edges("agent", tools_condition)
+        workflow.add_edge("tools", "agent") # Loop back to agent after tool usage
+        
+        self.graph = workflow.compile()
+
+    async def call_model(self, state: AgentState):
+        messages = state["messages"]
+        
+        # Inject System Prompt if it's the start of conversation
+        # (Or ensure it's always the first message context)
+        sys_msg = QA_AGENT_SYSTEM_PROMPT.format(structure=self.db_structure)
+        
+        # We prepend the system message to the current history for the API call
+        # (Note: We don't necessarily add it to 'state' history to keep history clean, 
+        # or we can check if it exists. For simplicity, we prepend here.)
+        api_messages = [SystemMessage(content=sys_msg)] + messages
+        
+        response = await self.llm.ainvoke(api_messages)
+        return {"messages": [response]}
+
+    async def chat(self, user_question: str) -> str:
         """
-        Text-to-Query -> Execute -> Text-Answer
+        Entry point for the Q&A loop.
         """
-        # Step 1: Generate Query
         try:
-            query_parser = JsonOutputParser()
-            query_msg = MONGO_QA_PROMPT.format(question=user_question  , structure=db_structure)
+            inputs = {"messages": [HumanMessage(content=user_question)]}
             
-            # Helper to get raw JSON
-            raw_response = await self.llm.ainvoke([HumanMessage(content=query_msg)])
-            query_dict = query_parser.parse(raw_response.content)
-            query = query_dict.get('query',None)
-            projection = query_dict.get('projection' , None)
-            logger.info(f"🔍 Generated Mongo Query: {query_dict}")
+            # The graph will run: Agent -> Tool? -> Agent -> Final Answer
+            result = await self.graph.ainvoke(inputs)
             
-            # Step 2: Execute
-            results = await self.mongo.execute_raw_query(query = query , projection=projection)
+            # Extract the final response text
+            final_msg = result["messages"][-1]
+            str_parser = StrOutputParser()
+            result = str_parser.invoke(final_msg)
+            return result
             
-            if not results:
-                return "I searched the database but found no matching candidates."
-            
-            # Step 3: Synthesize Answer ##TODO remove this 
-            # We summarize the findings for the LLM to describe
-            # summary = [
-            #     f"- Name: {r['resume']['personal_info'].get('full_name', 'Unknown')}, "
-            #     f"Score: {r.get('final_score')}, "
-            #     f"Location: {r['resume']['personal_info'].get('location')}"
-            #     for r in results
-            # ]
-            
-            ans_prompt = (
-                f"User Question: {user_question}\n\n"
-                f"Database Results:\n{str(results)}\n\n"
-                "Answer the user's question based on these results in Persian."
-            )
-            
-            final_ans = await self.llm.ainvoke([HumanMessage(content=ans_prompt)])
-            return final_ans.content
-
         except Exception as e:
-            logger.error(f"QA Failed: {e}")
-            return "Sorry, I could not process that question."
+            logger.error(f"Agent Loop Failed: {e}")
+            return "متاسفانه مشکلی در پردازش درخواست شما پیش آمد."

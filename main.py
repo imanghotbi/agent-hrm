@@ -5,7 +5,7 @@ from src.storage import MinioHandler
 from src.workflow import build_graph
 from src.config import logger
 from src.agent_hiring import HiringAgent
-from src.matcher import MongoRetriver
+from src.matcher import ResumeQAAgent
 from src.database import MongoHandler
 from src.config import config
 from utils.extract_structure import ExtractSchema
@@ -99,9 +99,6 @@ async def main():
     # --- PHASE 5: TOP CANDIDATES ---
     logger.info("\n--- 🏆 Top 5 Candidates ---")
     top_5 = await mongo.get_top_candidates(5)
-    extract_schema = ExtractSchema(config.mongo_uri,config.mongo_db_name , config.mongo_collection)
-    doc = random.choice(top_5)
-    structure = extract_schema.generate_schema(doc)
     for i, cand in enumerate(top_5, 1):
         info = cand['resume']['personal_info']
         score = cand['final_score']
@@ -112,12 +109,23 @@ async def main():
     # --- PHASE 6: Q&A SYSTEM ---
     logger.info("\n--- 💬 Database Q&A (Type 'exit' to quit) ---")
     print("Ask questions about the resumes (e.g., 'Who knows Python?', 'Is Morteza here?').")
-    q_a = MongoRetriver()
+    try:
+        extract_schema = ExtractSchema(config.mongo_uri,config.mongo_db_name , config.mongo_collection)
+        sample_doc = extract_schema.get_random_doc()
+        if sample_doc:
+            db_structure = extract_schema.generate_schema(sample_doc)
+        else:
+            db_structure = "Database is empty."
+            logger.warning("Database is empty; Q&A agent might not work correctly.")
+    except Exception as e:
+        logger.error(f"Failed to extract schema: {e}")
+        db_structure = {}
+    qa_agent = ResumeQAAgent(db_structure)
     while True:
         q = input("\n❓ Question: ").strip()
         if q.lower() in ["exit", "quit"]:
             break
-        answer = await q_a.run_qa(q,structure)
+        answer = await qa_agent.chat(q)
         print(f"🤖 Answer: {answer}")
 if __name__ == "__main__":
     asyncio.run(main())
