@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+from langgraph.types import Command
 from src.storage import MinioHandler
 from src.workflow import build_graph
 from src.config import logger
@@ -72,60 +73,42 @@ async def main():
     logger.info("\n--- ⚡ Step 2: Starting Resume Processing Workflow ---")
     app = build_graph()
     
+    thread_config = {"configurable": {"thread_id": "session_1"}}
     # Initial state
     inputs = {
         "all_files": [], 
         "hiring_reqs": reqs, # Inject requirements
-        "final_results": []
+        "final_results": [],
+        "db_structure": {},
+        "current_question": "",
+        "qa_answer": ""
     }
     
-    # Run the graph
-    final_state = await app.ainvoke(inputs)
+    async for event in app.astream(inputs, config=thread_config):
+        pass
     
-    # 3. Summary & Save
-    errors = final_state.get("errors", []) 
-    structured_resumes = final_state.get("evaluated_results", [])
-    # Save to JSON file
-    if not structured_resumes:
-        logger.error("No resumes processed.")
-        return
-        
-    logger.info(f"💾 Saving {len(structured_resumes)} scored candidates to DB...")
-    mongo = MongoHandler()
-    for resume in structured_resumes:
-        # Save to Mongo
-        await mongo.save_candidate(resume)
-        
-    # --- PHASE 5: TOP CANDIDATES ---
-    logger.info("\n--- 🏆 Top 5 Candidates ---")
-    top_5 = await mongo.get_top_candidates(5)
-    for i, cand in enumerate(top_5, 1):
-        info = cand['resume']['personal_info']
-        score = cand['final_score']
-        print(f"{i}. {info.get('full_name')} | Score: {score}/100")
-        print(f"   Reason: {cand['evaluation']['summary_explanation']}")
-        print("   ---")
 
     # --- PHASE 6: Q&A SYSTEM ---
     logger.info("\n--- 💬 Database Q&A (Type 'exit' to quit) ---")
     print("Ask questions about the resumes (e.g., 'Who knows Python?', 'Is Morteza here?').")
-    try:
-        extract_schema = ExtractSchema(config.mongo_uri,config.mongo_db_name , config.mongo_collection)
-        sample_doc = extract_schema.get_random_doc()
-        if sample_doc:
-            db_structure = extract_schema.generate_schema(sample_doc)
-        else:
-            db_structure = "Database is empty."
-            logger.warning("Database is empty; Q&A agent might not work correctly.")
-    except Exception as e:
-        logger.error(f"Failed to extract schema: {e}")
-        db_structure = {}
-    qa_agent = ResumeQAAgent(db_structure)
     while True:
-        q = input("\n❓ Question: ").strip()
-        if q.lower() in ["exit", "quit"]:
+        # Check current state to see if we are indeed paused at 'qa_input'
+        snapshot = await app.aget_state(thread_config)
+        
+        if not snapshot.next:
+            logger.info("Workflow finished.")
             break
-        answer = await qa_agent.chat(q)
-        print(f"🤖 Answer: {answer}")
+            
+        # If we are waiting for user input
+        user_q = input("\n❓ Question: ").strip()
+        
+        # Resume the graph with the user's input
+        # The 'resume' value is what the interrupt() function returns inside the node
+        async for event in app.astream(Command(resume=user_q), config=thread_config):
+            pass
+            
+        if user_q.lower() in ["exit", "quit"]:
+            break
+
 if __name__ == "__main__":
     asyncio.run(main())

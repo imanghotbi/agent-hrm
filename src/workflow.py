@@ -8,15 +8,18 @@ from pdf2image import convert_from_bytes
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END, START
-from langgraph.types import Send
+from langgraph.types import Send  , interrupt, Command
+from langgraph.checkpoint.memory import MemorySaver
 
+from src.database import MongoHandler
 from src.config import config, logger
 from src.schemas.resume import ResumeData
 from src.schemas.hiring import HiringRequirements
 from src.storage import MinioHandler
 from src.schemas.evaluation import ResumeEvaluation, ScoredResume
+from src.matcher import ResumeQAAgent
 from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT
-
+from utils.extract_structure import ExtractSchema
 # -- GLOBAL SEMAPHORES --
 ocr_semaphore = asyncio.Semaphore(config.ocr_workers)
 structure_semaphore = asyncio.Semaphore(config.structure_workers)
@@ -44,6 +47,9 @@ class OverallState(TypedDict):
     # Reducer: Combines lists of results from the 10 branches
     evaluated_results: Annotated[List[Dict[str, Any]], operator.add]
     ocr_results: Annotated[List[Dict[str, str]], operator.add]
+    db_structure: Annotated[Dict , _keep_first]
+    current_question: str
+    qa_answer: str
 
 # -- LLM FACTORY --
 def get_llm(structured: bool = False):
@@ -236,6 +242,54 @@ async def batch_evaluate_node(state: BatchState):
     return {"evaluated_results": valid_results}
 
 # -- GRAPH NODES (MAIN LEVEL) --
+async def save_results_node(state: OverallState):
+    """Saves all evaluated resumes to MongoDB."""
+    results = state["evaluated_results"]
+    if not results:
+        logger.warning("No results to save.")
+        return
+    
+    logger.info(f"💾 Saving {len(results)} candidates to MongoDB...")
+    mongo = MongoHandler()
+    for res in results:
+        await mongo.save_candidate(res)
+    return
+
+async def prepare_qa_node(state: OverallState):
+    """Extracts DB schema once for the session."""
+    logger.info("🔍 Analyzing Database Schema for Q&A...")
+    try:
+        extractor = ExtractSchema(config.mongo_uri, config.mongo_db_name, config.mongo_collection)
+        sample = extractor.get_random_doc()
+        structure = extractor.generate_schema(sample) if sample else {}
+        return {"db_structure": structure}
+    except Exception as e:
+        logger.error(f"Schema extraction failed: {e}")
+        return {"db_structure": {}}
+
+def qa_input_node(state: OverallState):
+    """
+    Stops the graph and waits for user input.
+    """
+    logger.info("⏳ Waiting for user question (Interrupt)...")
+    user_input = interrupt(value="Ready for question")
+    
+    # Return Command to route based on input
+    if not user_input or user_input.lower() in ["exit", "quit"]:
+        return Command(goto=END)
+    
+    return {"current_question": user_input}
+
+async def qa_process_node(state: OverallState):
+    """Generates answer using the ReAct Agent."""
+    question = state["current_question"]
+    structure = state["db_structure"]
+    
+    agent = ResumeQAAgent(structure)
+    answer = await agent.run(question)
+    
+    print(f"\n🤖 Agent Answer: {answer}\n")
+    return {"qa_answer": answer}
 
 async def load_and_shard(state: OverallState):
     minio = MinioHandler()
@@ -303,9 +357,16 @@ def build_graph():
 
     # 2. Main Graph
     workflow_main = StateGraph(OverallState)
+
+    # Nodes
     workflow_main.add_node("load_and_shard", load_and_shard)
     workflow_main.add_node("process_batch_subgraph", workflow_batch.compile())
+    workflow_main.add_node("save_results", save_results_node)
+    workflow_main.add_node("prepare_qa", prepare_qa_node)
+    workflow_main.add_node("qa_input", qa_input_node)
+    workflow_main.add_node("qa_process", qa_process_node)
     
+    # Edges
     workflow_main.add_edge(START, "load_and_shard")
     
     # Conditional Map
@@ -315,6 +376,14 @@ def build_graph():
         ["process_batch_subgraph"]
     )
     
-    workflow_main.add_edge("process_batch_subgraph", END)
-    
-    return workflow_main.compile()
+    workflow_main.add_edge("process_batch_subgraph", "save_results")
+    workflow_main.add_edge("save_results", "prepare_qa")
+    workflow_main.add_edge("prepare_qa", "qa_input") # Enters Q&A Loop
+
+    # Q&A Loop
+    workflow_main.add_edge("qa_input", "qa_process")
+    workflow_main.add_edge("qa_process", "qa_input")
+
+   
+    checkpointer = MemorySaver()
+    return workflow_main.compile(checkpointer=checkpointer)
