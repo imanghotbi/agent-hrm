@@ -2,14 +2,17 @@ import asyncio
 import base64
 import io
 import math
-from typing import List, Any, Dict, Annotated ,TypedDict
+from typing import List, Any, Dict, Annotated ,TypedDict , Optional
 import operator
 from pdf2image import convert_from_bytes
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage , SystemMessage, BaseMessage, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, END, START
 from langgraph.types import Send  , interrupt, Command
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
+from langchain_core.tools import tool
+
 
 from src.database import MongoHandler
 from src.config import config, logger
@@ -17,17 +20,18 @@ from src.schemas.resume import ResumeData
 from src.schemas.hiring import HiringRequirements
 from src.storage import MinioHandler
 from src.schemas.evaluation import ResumeEvaluation, ScoredResume
+from src.schemas.hiring import HiringRequirements , SeniorityLevel , PriorityWeights
 from src.matcher import ResumeQAAgent
-from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT
+from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT, HIRING_AGENT_PROMPT
 from utils.extract_structure import ExtractSchema
 # -- GLOBAL SEMAPHORES --
 ocr_semaphore = asyncio.Semaphore(config.ocr_workers)
 structure_semaphore = asyncio.Semaphore(config.structure_workers)
 eval_semaphore = asyncio.Semaphore(config.eval_workers)
 
-def _keep_first(a, b):
-    # When multiple values come in, keep the first one.
-    return a
+def overwrite(a, b):
+    """Always keep the newest value (allows updating state)."""
+    return b
 
 # -- STATES --
 # 1. State for a BATCH of resumes (One of the 10 branches)
@@ -43,12 +47,13 @@ class BatchState(TypedDict):
 # 2. State for the OVERALL application
 class OverallState(TypedDict):
     all_files: List[str]
-    hiring_reqs: Annotated[HiringRequirements , _keep_first]
+    hiring_messages: Annotated[List[BaseMessage], add_messages]
+    hiring_reqs: Annotated[HiringRequirements , overwrite]
     # Reducer: Combines lists of results from the 10 branches
     evaluated_results: Annotated[List[Dict[str, Any]], operator.add]
     ocr_results: Annotated[List[Dict[str, str]], operator.add]
-    db_structure: Annotated[Dict , _keep_first]
-    current_question: str
+    db_structure: Annotated[Dict , overwrite]
+    current_question: Annotated[str, overwrite]
     qa_answer: str
 
 # -- LLM FACTORY --
@@ -64,6 +69,27 @@ def get_llm(structured: bool = False):
     if structured:
         return llm.with_structured_output(ResumeData)
     return llm
+
+
+# -- Tool --
+@tool
+def submit_hiring_requirements(role_title: str, 
+                                seniority: SeniorityLevel, 
+                                essential_hard_skills: List[str], 
+                                military_service_required: bool, 
+                                min_experience_years: int, 
+                                education_level:str,
+                                weights: PriorityWeights,
+                                university_tier:int,
+                                nice_to_have_skills:Optional[List[str]],
+                                language_proficiency:Optional[str],
+                                **kwargs):
+    """
+    Call this tool ONLY when you have gathered ALL necessary requirements from the user.
+    """
+    # This function acts as a dummy to validate inputs, the real data capture happens in the run loop
+    return "Requirements captured."
+
 
 # -- CORE LOGIC (HELPER FUNCTIONS) --
 # These are called by the nodes. We keep them separate to allow internal parallelism.
@@ -267,12 +293,75 @@ async def prepare_qa_node(state: OverallState):
         logger.error(f"Schema extraction failed: {e}")
         return {"db_structure": {}}
 
+async def hiring_process_node(state: OverallState):
+    """
+    Runs the Hiring Agent logic.
+    Decides whether to respond with text (ask more questions) or call the tool (finish).
+    """
+    messages = state["hiring_messages"]
+    
+    # Ensure system prompt is present
+    if not messages or not isinstance(messages[0], SystemMessage):
+        # We prepend system prompt if not there (conceptually)
+        # For 'add_messages', we just add it if history is empty
+        sys_msg = SystemMessage(content=HIRING_AGENT_PROMPT)
+        messages = [sys_msg] + messages
+
+    # Call LLM
+    llm = ChatGoogleGenerativeAI(
+        model=config.model_name,
+        google_api_key=config.google_api_key.get_secret_value(),
+        temperature=0.0
+    ).bind_tools([submit_hiring_requirements])
+    
+    response = await llm.ainvoke(messages)
+    
+    # Logic: Did the agent call the tool?
+    if response.tool_calls:
+        tool_call = response.tool_calls[0]
+        if tool_call["name"] == "submit_hiring_requirements":
+            logger.info("🎯 Hiring Requirements Collected.")
+            try:
+                # Extract args and build the object
+                args = tool_call["args"]
+                reqs = HiringRequirements(**args)
+                
+                # Return command to jump to next phase (load files)
+                # We also save the reqs to state
+                return {
+                    "hiring_messages": [response], 
+                    "hiring_reqs": reqs
+                }
+            except Exception as e:
+                # Validation error - send back to agent to fix
+                logger.error(f"Validation Error: {e}")
+                err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
+                return {"hiring_messages": [response, err_msg]}
+    
+    # If just text, return the response so we can show it to user and wait for input
+    return {"hiring_messages": [response]}
+
+def hiring_input_node(state: OverallState):
+    """
+    Interrupts execution to get the User's answer to the Recruiter's question.
+    """
+    # Get the last AI message to display? (Main.py handles display, but we can verify)
+    
+    # Interrupt!
+    user_response = interrupt(value="hiring_input")
+    
+    # If user wants to quit
+    if not user_response or user_response.lower() in ["exit", "quit"]:
+        return Command(goto=END)
+        
+    return {"hiring_messages": [HumanMessage(content=user_response)]}
+
 def qa_input_node(state: OverallState):
     """
     Stops the graph and waits for user input.
     """
     logger.info("⏳ Waiting for user question (Interrupt)...")
-    user_input = interrupt(value="Ready for question")
+    user_input = interrupt(value="qa_input")
     
     # Return Command to route based on input
     if not user_input or user_input.lower() in ["exit", "quit"]:
@@ -341,6 +430,12 @@ def map_to_batches(state: OverallState):
     logger.info(f"🔀 Sharded {total_files} files into {len(batch_requests)} batches (Target Max: 10).")
     return batch_requests
 
+
+def should_continue_hiring(state: OverallState):
+    """Decides where to go after hiring_process."""
+    if state.get("hiring_reqs"):
+        return "load_and_shard"
+    return "hiring_input"
 # -- BUILD GRAPH --
 
 def build_graph():
@@ -359,6 +454,8 @@ def build_graph():
     workflow_main = StateGraph(OverallState)
 
     # Nodes
+    workflow_main.add_node("hiring_process", hiring_process_node)
+    workflow_main.add_node("hiring_input", hiring_input_node)
     workflow_main.add_node("load_and_shard", load_and_shard)
     workflow_main.add_node("process_batch_subgraph", workflow_batch.compile())
     workflow_main.add_node("save_results", save_results_node)
@@ -367,7 +464,14 @@ def build_graph():
     workflow_main.add_node("qa_process", qa_process_node)
     
     # Edges
-    workflow_main.add_edge(START, "load_and_shard")
+    workflow_main.add_edge(START, "hiring_process")
+    workflow_main.add_conditional_edges(
+        "hiring_process",
+        should_continue_hiring,
+        ["load_and_shard", "hiring_input"]
+    )
+    workflow_main.add_edge("hiring_input", "hiring_process")
+
     
     # Conditional Map
     workflow_main.add_conditional_edges(

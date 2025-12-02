@@ -10,6 +10,8 @@ from src.matcher import ResumeQAAgent
 from src.database import MongoHandler
 from src.config import config
 from utils.extract_structure import ExtractSchema
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 import random
 
 async def main():
@@ -48,66 +50,65 @@ async def main():
     # Initial Greeting
     print("\n🤖 Agent: Hello! I am your AI Recruiter. What kind of position are you hiring for today?")
     
-    while not hiring_agent.is_complete:
-        user_input = input("👤 You: ").strip()
-        if user_input.lower() in ["exit", "quit"]:
-            logger.info("User aborted conversation.")
-            return
-
-        response_text = await hiring_agent.run_turn(user_input)
-        print(f"🤖 Agent: {response_text}")
-    
-    # Result of Phase 2
-    reqs = hiring_agent.final_requirements
-    logger.info(f"\n✅ Requirements Captured: {reqs.role_title} ({reqs.seniority})")
-    logger.info(f"   Skills: {reqs.essential_hard_skills}")
-    logger.info(f"   Military Service Required: {reqs.military_service_required}")
-    
-    # Save requirements to file (so the workflow could theoretically use them later)
-    with open("hiring_requirements.json", "w", encoding="utf-8") as f:
-        f.write(reqs.model_dump_json(indent=2))
-
-    import time
-    time.sleep(30) ## TODO remove later
-    # 2. Workflow Execution Phase
-    logger.info("\n--- ⚡ Step 2: Starting Resume Processing Workflow ---")
     app = build_graph()
-    
-    thread_config = {"configurable": {"thread_id": "session_1"}}
+    thread_config = {"configurable": {"thread_id": "unified_session_1"}}
+
     # Initial state
     inputs = {
         "all_files": [], 
-        "hiring_reqs": reqs, # Inject requirements
+        "hiring_reqs": [], # Inject requirements
         "final_results": [],
         "db_structure": {},
-        "current_question": "",
-        "qa_answer": ""
+        "hiring_messages": [HumanMessage('Introduce yourself.')]
     }
-    
+    logger.info("Starting System...")
+    parser = StrOutputParser()
+
     async for event in app.astream(inputs, config=thread_config):
-        pass
+        if "hiring_process" in event:
+            msgs = event["hiring_process"].get("hiring_messages", [])
+            if msgs:
+                last_msg = msgs[-1]
+                # If it's an AI message with text (and not a tool call hidden logic), print it
+                if hasattr(last_msg, 'content') and last_msg.content:
+                    print(f"\n🤖 Agent: {parser.invoke(last_msg)}")
     
 
     # --- PHASE 6: Q&A SYSTEM ---
-    logger.info("\n--- 💬 Database Q&A (Type 'exit' to quit) ---")
-    print("Ask questions about the resumes (e.g., 'Who knows Python?', 'Is Morteza here?').")
+    # logger.info("\n--- 💬 Database Q&A (Type 'exit' to quit) ---")
+    # print("Ask questions about the resumes (e.g., 'Who knows Python?', 'Is Morteza here?').")
     while True:
         # Check current state to see if we are indeed paused at 'qa_input'
         snapshot = await app.aget_state(thread_config)
         
         if not snapshot.next:
-            logger.info("Workflow finished.")
+            logger.info("✅ Workflow Finished.")
             break
-            
-        # If we are waiting for user input
-        user_q = input("\n❓ Question: ").strip()
         
-        # Resume the graph with the user's input
-        # The 'resume' value is what the interrupt() function returns inside the node
-        async for event in app.astream(Command(resume=user_q), config=thread_config):
-            pass
+        # Check for Interrupts
+        if snapshot.tasks and snapshot.tasks[0].interrupts:
+            # The 'value' we passed to interrupt() is here
+            interrupt_value = snapshot.tasks[0].interrupts[0].value
             
-        if user_q.lower() in ["exit", "quit"]:
+            # Context-aware Prompting
+            if interrupt_value == "hiring_input":
+                user_input = input("\n👤 You (Requirement): ").strip()
+            elif interrupt_value == "qa_input":
+                user_input = input("\n❓ You (Question): ").strip()
+            else:
+                user_input = input("\n👤 Input needed: ").strip()
+            
+            # Resume Graph
+            async for event in app.astream(Command(resume=user_input), config=thread_config):
+                if "hiring_process" in event:
+                    msgs = event["hiring_process"].get("hiring_messages", [])
+                    if msgs:
+                        last_msg = msgs[-1]
+                        if hasattr(last_msg, 'content') and last_msg.content:
+                            print(f"\n🤖 Agent: {parser.invoke(last_msg)}")
+
+        else:
+            # Should not happen if graph is designed correctly with interrupts
             break
 
 if __name__ == "__main__":
