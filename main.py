@@ -95,11 +95,36 @@ async def main():
             # Context-aware Prompting
             if interrupt_value == "hiring_input" or interrupt_value == "router_node" or interrupt_value =="jd_node":
                 user_input = input("\n👤 You (Requirement): ").strip()
+            
             elif interrupt_value == "qa_input":
                 user_input = input("\n❓ You (Question): ").strip()
+
+            elif isinstance(interrupt_value, dict) and interrupt_value.get("type") == "compare_upload":
+                print(f"\n🤖 System: {interrupt_value['msg']}")
+                # Ask for folder or file paths
+                path_input = input("👤 Enter file paths (comma separated) or folder: ").strip()
+                
+                uploaded_keys = []
+                if path_input.lower() not in ["exit", "quit"]:
+                    # Simple Logic: Check if it's a folder or list of files
+                    if os.path.isdir(path_input):
+                        files = [os.path.join(path_input, f) for f in os.listdir(path_input) if f.endswith('.pdf')]
+                    else:
+                        files = [f.strip() for f in path_input.split(',')]
+                    
+                    # Upload them immediately
+                    if files:
+                        logger.info(f"Uploading {len(files)} files for comparison...")
+                        tasks = [minio.upload_file(f, os.path.basename(f)) for f in files]
+                        await asyncio.gather(*tasks)
+                        # We return the MinIO keys (filenames) to the graph
+                        uploaded_keys = [os.path.basename(f) for f in files]
+                        
+                async for event in app.astream(Command(resume=uploaded_keys), config=thread_config):
+                    pass
+            
             else:
                 user_input = input("\n👤 Input needed: ").strip()
-            
             # Resume Graph
             async for event in app.astream(Command(resume=user_input), config=thread_config):
                 if "hiring_process" in event:

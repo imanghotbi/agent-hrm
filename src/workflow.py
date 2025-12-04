@@ -25,7 +25,7 @@ from src.storage import MinioHandler
 from src.schemas.evaluation import ResumeEvaluation, ScoredResume
 from src.schemas.hiring import HiringRequirements , SeniorityLevel , PriorityWeights
 from src.matcher import ResumeQAAgent
-from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT, HIRING_AGENT_PROMPT , ROUTER_PROMPT,JD_REQUIREMENTS_GATHER,JD_WRITER_PROMPT
+from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT, HIRING_AGENT_PROMPT , ROUTER_PROMPT,JD_REQUIREMENTS_GATHER,JD_WRITER_PROMPT,COMPARISON_PROMPT , COMPARE_QA_PROMPT
 from utils.extract_structure import ExtractSchema
 
 # -- GLOBAL SEMAPHORES --
@@ -53,7 +53,7 @@ class BatchState(TypedDict):
 # 2. State for the OVERALL application
 class OverallState(TypedDict):
     # -- Router Phase --
-    intent: Annotated[Literal["REVIEW", "WRITE"], overwrite]
+    intent: Annotated[Literal["REVIEW", "WRITE","COMPARE"], overwrite]
     start_message: Annotated[List[BaseMessage], add_messages]
     
     # -- Job description phase --
@@ -75,6 +75,11 @@ class OverallState(TypedDict):
     db_structure: Annotated[Dict , overwrite]
     current_question: Annotated[str, overwrite]
     qa_answer: str
+
+    # -- Compare Phase State --
+    compare_files: List[str]          # List of file keys
+    comparison_context: str           # The generated report + raw text
+    compare_qa_answer: str
 
 # -- LLM FACTORY --
 def get_llm(structured: bool = False):
@@ -137,6 +142,7 @@ def submit_jd_requirements(job_title: str,
 class Path(str, Enum):
     REVIEW = "REVIEW"
     WRITE = "WRITE"
+    COMPARE = "COMPARE"
 
 @tool
 def router_tool(path:Path):
@@ -465,6 +471,90 @@ async def jd_writer_node(state: OverallState):
     
     return {"final_jd": text}
 
+def compare_input_node(state: OverallState):
+    """
+    Interrupts to ask user for the resumes (files) to compare.
+    """
+    msg = "📂 Please provide the resumes you want to compare (PDFs). You can upload up to 3 files."
+    # We pass a specific type so main.py knows to handle file uploads
+    user_input = interrupt(value={"type": "compare_upload", "msg": msg})
+    
+    if not user_input or (isinstance(user_input, str) and user_input.lower() in ["exit", "quit"]):
+        return Command(goto=END)
+    
+    # Expecting 'user_input' to be a list of file keys (uploaded by main.py)
+    return {"compare_files": user_input}
+
+async def compare_process_node(state: OverallState):
+    """
+    1. OCR the selected files in parallel.
+    2. Generate Comparison Report.
+    """
+    files = state["compare_files"][:3] # Limit to 3
+    logger.info(f"⚖️ Comparing {len(files)} resumes...")
+    
+    minio = MinioHandler()
+    
+    # Reuse the existing OCR helper!
+    # We create tasks for each file
+    tasks = [process_single_ocr(minio, f) for f in files]
+    results = await asyncio.gather(*tasks)
+    
+    # results is a list of (file_key, text) tuples
+    combined_text = ""
+    for i, (key, text) in enumerate(results):
+        if text:
+            combined_text += f"\n\n--- Candidate {i+1} ({key}) ---\n{text}"
+    
+    if not combined_text:
+        return {"comparison_context": "No text extracted from files."}
+
+    # Generate Report
+    prompt = COMPARISON_PROMPT.format(count=len(files), resumes_text=combined_text)
+    
+    llm = ChatGoogleGenerativeAI(
+        model=config.model_name,
+        google_api_key=config.google_api_key.get_secret_value(),
+        temperature=0.2
+    )
+    
+    report = await llm.ainvoke([HumanMessage(content=prompt)])
+    report_content = parser.invoke(report)
+    print("\n" + "="*40)
+    print("      📊 COMPARISON REPORT")
+    print("="*40 + "\n")
+    print(report_content)
+    print("\n" + "="*40 + "\n")
+    
+    # Save context for Q&A
+    full_context = f"REPORT:\n{report_content}\n\nRAW RESUMES:{combined_text}"
+    return {"comparison_context": full_context}
+
+def compare_qa_input_node(state: OverallState):
+    """Interrupt for Q&A on the comparison."""
+    user_q = interrupt(value="compare_qa_input")
+    if not user_q or user_q.lower() in ["exit", "quit"]:
+        return Command(goto=END)
+    return {"current_question": user_q}
+
+async def compare_qa_process_node(state: OverallState):
+    """Answers questions based on the comparison context."""
+    context = state["comparison_context"]
+    question = state["current_question"]
+    
+    prompt = COMPARE_QA_PROMPT.format(context=context, question=question)
+    
+    llm = ChatGoogleGenerativeAI(
+        model=config.model_name,
+        google_api_key=config.google_api_key.get_secret_value(),
+        temperature=0
+    )
+    
+    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    response_content = parser.invoke(response)
+    print(f"\n🤖 Comparison Assistant: {response_content}\n")
+    return {"compare_qa_answer": response_content}
+
 async def save_results_node(state: OverallState):
     """Saves all evaluated resumes to MongoDB."""
     results = state["evaluated_results"]
@@ -649,6 +739,8 @@ def define_path(state: OverallState):
         return "hiring_process"
     elif state.get("intent") == "WRITE":
         return "jd_process"
+    elif state.get("intent") == "COMPARE":
+        return "compare_input"
     return "router_input"
 
 # -- BUILD GRAPH --
@@ -658,7 +750,7 @@ def build_graph():
     workflow_batch = StateGraph(BatchState)
     workflow_batch.add_node("batch_ocr", batch_ocr_node)
     workflow_batch.add_node("batch_structure", batch_structure_node)
-    workflow_batch.add_node("batch_evaluate", batch_evaluate_node) # NEW
+    workflow_batch.add_node("batch_evaluate", batch_evaluate_node)
     
     workflow_batch.add_edge(START, "batch_ocr")
     workflow_batch.add_edge("batch_ocr", "batch_structure")
@@ -676,6 +768,10 @@ def build_graph():
     workflow_main.add_node("jd_process", jd_process_node)
     workflow_main.add_node("jd_input", jd_input_node)
     workflow_main.add_node("jd_writer", jd_writer_node)
+    workflow_main.add_node("compare_input", compare_input_node)
+    workflow_main.add_node("compare_process", compare_process_node)
+    workflow_main.add_node("compare_qa_input", compare_qa_input_node)
+    workflow_main.add_node("compare_qa_process", compare_qa_process_node)
     workflow_main.add_node("load_and_shard", load_and_shard)
     workflow_main.add_node("process_batch_subgraph", workflow_batch.compile())
     workflow_main.add_node("save_results", save_results_node)
@@ -688,7 +784,7 @@ def build_graph():
     workflow_main.add_conditional_edges(
         "router_process",
         define_path,
-        ["hiring_process","router_input","jd_process"]
+        ["hiring_process","router_input","jd_process","compare_input"]
     )
     workflow_main.add_edge("router_input", "router_process")
 
@@ -722,6 +818,11 @@ def build_graph():
     workflow_main.add_edge("qa_input", "qa_process")
     workflow_main.add_edge("qa_process", "qa_input")
 
-   
+   # Compare Pipeline
+    workflow_main.add_edge("compare_input", "compare_process")
+    workflow_main.add_edge("compare_process", "compare_qa_input")
+    workflow_main.add_edge("compare_qa_input", "compare_qa_process")
+    workflow_main.add_edge("compare_qa_process", "compare_qa_input")
+    
     checkpointer = MemorySaver()
     return workflow_main.compile(checkpointer=checkpointer)
