@@ -59,7 +59,9 @@ async def main():
         "hiring_reqs": [], # Inject requirements
         "final_results": [],
         "db_structure": {},
-        "hiring_messages": [HumanMessage('Introduce yourself.')]
+        "hiring_messages":[],
+        "jd_messages":[],
+        "start_message": [HumanMessage('Introduce yourself.')]
     }
     logger.info("Starting System...")
     parser = StrOutputParser()
@@ -91,7 +93,7 @@ async def main():
             interrupt_value = snapshot.tasks[0].interrupts[0].value
             
             # Context-aware Prompting
-            if interrupt_value == "hiring_input":
+            if interrupt_value == "hiring_input" or interrupt_value == "router_node" or interrupt_value =="jd_node":
                 user_input = input("\n👤 You (Requirement): ").strip()
             elif interrupt_value == "qa_input":
                 user_input = input("\n❓ You (Question): ").strip()

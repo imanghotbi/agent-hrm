@@ -17,12 +17,12 @@ class SeniorityLevel(str, Enum):
 # SUB-MODELS
 # ==================================================
 class PriorityWeights(BaseModel):
-    hard_skills_weight: int = Field(..., ge=1, le=10)
-    experience_weight: int = Field(..., ge=1, le=10)
-    education_weight: int = Field(..., ge=1, le=10)
-    soft_skills_weight: int = Field(..., ge=1, le=10)
-    university_tier_weight: int = Field(..., ge=1, le=10)
-    military_status_weight: int = Field(default=5, ge=1, le=10)
+    hard_skills_weight: int = Field(..., ge=0, le=10)
+    experience_weight: int = Field(..., ge=0, le=10)
+    education_weight: int = Field(..., ge=0, le=10)
+    soft_skills_weight: int = Field(..., ge=0, le=10)
+    university_tier_weight: int = Field(..., ge=0, le=10)
+    military_status_weight: int = Field(default=5, ge=0, le=10)
 
 # ==================================================
 # Recruitment requirements

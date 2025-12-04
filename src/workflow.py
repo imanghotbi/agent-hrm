@@ -2,7 +2,8 @@ import asyncio
 import base64
 import io
 import math
-from typing import List, Any, Dict, Annotated ,TypedDict , Optional
+from typing import List, Any, Dict, Annotated ,TypedDict , Optional, Literal
+from enum import Enum
 import operator
 from pdf2image import convert_from_bytes
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -11,6 +12,7 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.types import Send  , interrupt, Command
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.message import add_messages
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 
 
@@ -18,16 +20,20 @@ from src.database import MongoHandler
 from src.config import config, logger
 from src.schemas.resume import ResumeData
 from src.schemas.hiring import HiringRequirements
+from src.schemas.job_description import JobDescriptionRequest,WorkMode,EmploymentType,MilitaryServiceRequirement,Language,SalaryRange,EducationLevel
 from src.storage import MinioHandler
 from src.schemas.evaluation import ResumeEvaluation, ScoredResume
 from src.schemas.hiring import HiringRequirements , SeniorityLevel , PriorityWeights
 from src.matcher import ResumeQAAgent
-from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT, HIRING_AGENT_PROMPT
+from utils.prompt import OCR_PROMPT, STRUCTURE_PROMPT_TEMPLATE ,SCORING_PROMPT, HIRING_AGENT_PROMPT , ROUTER_PROMPT,JD_REQUIREMENTS_GATHER,JD_WRITER_PROMPT
 from utils.extract_structure import ExtractSchema
+
 # -- GLOBAL SEMAPHORES --
 ocr_semaphore = asyncio.Semaphore(config.ocr_workers)
 structure_semaphore = asyncio.Semaphore(config.structure_workers)
 eval_semaphore = asyncio.Semaphore(config.eval_workers)
+
+parser = StrOutputParser()
 
 def overwrite(a, b):
     """Always keep the newest value (allows updating state)."""
@@ -46,12 +52,26 @@ class BatchState(TypedDict):
 
 # 2. State for the OVERALL application
 class OverallState(TypedDict):
-    all_files: List[str]
+    # -- Router Phase --
+    intent: Annotated[Literal["REVIEW", "WRITE"], overwrite]
+    start_message: Annotated[List[BaseMessage], add_messages]
+    
+    # -- Job description phase --
+    jd_messages: Annotated[List[BaseMessage], add_messages]
+    jd_reqs: Annotated[JobDescriptionRequest , overwrite]
+    final_jd: str
+    
+    # -- Hiring Phase State --
     hiring_messages: Annotated[List[BaseMessage], add_messages]
     hiring_reqs: Annotated[HiringRequirements , overwrite]
+
     # Reducer: Combines lists of results from the 10 branches
+    # -- Processing Phase State --
     evaluated_results: Annotated[List[Dict[str, Any]], operator.add]
     ocr_results: Annotated[List[Dict[str, str]], operator.add]
+    all_files: List[str]
+
+    # -- Q&A Phase State --
     db_structure: Annotated[Dict , overwrite]
     current_question: Annotated[str, overwrite]
     qa_answer: str
@@ -69,7 +89,6 @@ def get_llm(structured: bool = False):
     if structured:
         return llm.with_structured_output(ResumeData)
     return llm
-
 
 # -- Tool --
 @tool
@@ -89,6 +108,42 @@ def submit_hiring_requirements(role_title: str,
     """
     # This function acts as a dummy to validate inputs, the real data capture happens in the run loop
     return "Requirements captured."
+
+@tool
+def submit_jd_requirements(job_title: str, 
+                            seniority_level: SeniorityLevel, 
+                            location: str, 
+                            education_level: EducationLevel,
+                            study_fields: List[str],
+                            work_mode: WorkMode,
+                            employment_type: EmploymentType,
+                            military_service: MilitaryServiceRequirement, 
+                            min_experience_years: int, 
+                            days_and_hours:str,
+                            hard_skills: List[str],
+                            soft_skills: List[str],
+                            responsibilities: List[str],
+                            advantage_skills:Optional[List[str]],
+                            target_language: Language,
+                            benefits: List[str],
+                            salary: Optional[SalaryRange],
+                            **kwargs):
+    """
+    Call this tool ONLY when you have gathered ALL necessary requirements from the user.
+    """
+    # This function acts as a dummy to validate inputs, the real data capture happens in the run loop
+    return "Job description Requirements captured."
+
+class Path(str, Enum):
+    REVIEW = "REVIEW"
+    WRITE = "WRITE"
+
+@tool
+def router_tool(path:Path):
+    """
+    Call this tool ONLY Once you understand what the application is intended for and which of the paths it needs.
+    """
+    return "The route has been determined."
 
 
 # -- CORE LOGIC (HELPER FUNCTIONS) --
@@ -268,6 +323,148 @@ async def batch_evaluate_node(state: BatchState):
     return {"evaluated_results": valid_results}
 
 # -- GRAPH NODES (MAIN LEVEL) --
+async def router_process_node(state: OverallState):
+    """
+    Acts as the Receptionist. Explains features and asks for request.
+    """
+    messages = state["start_message"]
+    
+    # Ensure system prompt is present
+    if not messages or not isinstance(messages[0], SystemMessage):
+        # We prepend system prompt if not there (conceptually)
+        # For 'add_messages', we just add it if history is empty
+        sys_msg = SystemMessage(content=ROUTER_PROMPT)
+        messages = [sys_msg] + messages
+
+    llm = ChatGoogleGenerativeAI(
+        model=config.model_name,
+        google_api_key=config.google_api_key.get_secret_value(),
+        temperature=0.0
+    ).bind_tools([router_tool])
+    
+    response = await llm.ainvoke(messages)
+    if response.tool_calls:
+        tool_call = response.tool_calls[0]
+        if tool_call["name"] == "router_tool":
+            logger.info("🎯 Routing Path Defined")
+            try:
+                # Extract args and build the object
+                args = tool_call["args"]
+                
+                # Return command to jump to next phase (load files)
+                # We also save the reqs to state
+                return {
+                    "intent": args['path']
+                }
+            except Exception as e:
+                # Validation error - send back to agent to fix
+                logger.error(f"Validation Error: {e}")
+                err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
+                return {"intent": [response, err_msg]}
+    # If just text, return the response so we can show it to user and wait for input
+    print(f"\n🤖 Agent Answer: {parser.invoke(response)}\n")
+    return {"start_message": [response]}
+
+def router_input_node(state:OverallState):
+    """
+    Stops the graph and waits for user input.
+    """
+    logger.info("⏳ Waiting for user question (Interrupt)...")
+    user_input = interrupt(value="router_node")
+    
+    # Return Command to route based on input
+    if not user_input or user_input.lower() in ["exit", "quit"]:
+        return Command(goto=END)
+    
+    return {"start_message": [HumanMessage(user_input)]}
+
+async def jd_process_node(state: OverallState):
+    """
+    Acts as the Receptionist. Explains features and asks for request.
+    """
+    if not state["jd_messages"]:
+        messages = [state['start_message'][-1]]
+        state["jd_messages"] = messages
+    else:
+        messages = state['jd_messages']
+    # Ensure system prompt is present
+    if not isinstance(messages[0], SystemMessage):
+        # We prepend system prompt if not there (conceptually)
+        # For 'add_messages', we just add it if history is empty
+        sys_msg = SystemMessage(content=JD_REQUIREMENTS_GATHER)
+        messages = [sys_msg] + messages
+
+    llm = ChatGoogleGenerativeAI(
+        model=config.model_name,
+        google_api_key=config.google_api_key.get_secret_value(),
+        temperature=0.0
+    ).bind_tools([submit_jd_requirements])
+    
+    response = await llm.ainvoke(messages)
+    if response.tool_calls:
+        tool_call = response.tool_calls[0]
+        if tool_call["name"] == "submit_jd_requirements":
+            logger.info("🎯 Job description requirement Defined")
+            try:
+                # Extract args and build the object
+                args = tool_call["args"]
+                reqs = JobDescriptionRequest(**args)
+                
+                # Return command to jump to next phase (load files)
+                # We also save the reqs to state
+                return {
+                    "jd_messages": [response], 
+                    "jd_reqs": reqs
+                }
+            except Exception as e:
+                # Validation error - send back to agent to fix
+                logger.error(f"Validation Error: {e}")
+                err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
+                return {"intent": [response, err_msg]}
+    # If just text, return the response so we can show it to user and wait for input
+    print(f"\n🤖 Agent Answer: {parser.invoke(response)}\n")
+    return {"jd_messages": [response]}
+
+def jd_input_node(state:OverallState):
+    """
+    Stops the graph and waits for user input.
+    """
+    logger.info("⏳ Waiting for user question (Interrupt)...")
+    user_input = interrupt(value="jd_node")
+    
+    # Return Command to route based on input
+    if not user_input or user_input.lower() in ["exit", "quit"]:
+        return Command(goto=END)
+    
+    return {"jd_messages": [HumanMessage(user_input)]}
+
+async def jd_writer_node(state: OverallState):
+    """
+    Generates the Job Description text.
+    """
+    reqs = state["jd_reqs"]
+    logger.info("✍️ Generating Job Description...")
+    
+    prompt = JD_WRITER_PROMPT.format(
+        reqs_json=reqs.model_dump_json(),
+    )
+    
+    llm = ChatGoogleGenerativeAI(
+        model=config.model_name,
+        google_api_key=config.google_api_key.get_secret_value(),
+        temperature=0.7 # Higher temp for creativity
+    )
+    
+    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    text = parser.invoke(response)
+    print("\n" + "="*40)
+    print("      📄 GENERATED JOB DESCRIPTION")
+    print("="*40 + "\n")
+    print(text)
+    print("\n" + "="*40 + "\n")
+    
+    return {"final_jd": text}
+
 async def save_results_node(state: OverallState):
     """Saves all evaluated resumes to MongoDB."""
     results = state["evaluated_results"]
@@ -298,10 +495,13 @@ async def hiring_process_node(state: OverallState):
     Runs the Hiring Agent logic.
     Decides whether to respond with text (ask more questions) or call the tool (finish).
     """
-    messages = state["hiring_messages"]
-    
+    if not state["hiring_messages"]:
+        messages = [state['start_message'][-1]]
+        state["hiring_messages"] = messages
+    else:
+        messages = state['hiring_messages']
     # Ensure system prompt is present
-    if not messages or not isinstance(messages[0], SystemMessage):
+    if not isinstance(messages[0], SystemMessage):
         # We prepend system prompt if not there (conceptually)
         # For 'add_messages', we just add it if history is empty
         sys_msg = SystemMessage(content=HIRING_AGENT_PROMPT)
@@ -430,12 +630,27 @@ def map_to_batches(state: OverallState):
     logger.info(f"🔀 Sharded {total_files} files into {len(batch_requests)} batches (Target Max: 10).")
     return batch_requests
 
-
+# -- CONDITIONAL CHECK FUNCTION --
 def should_continue_hiring(state: OverallState):
     """Decides where to go after hiring_process."""
     if state.get("hiring_reqs"):
         return "load_and_shard"
     return "hiring_input"
+
+def should_continue_jd_requirement(state: OverallState):
+    """Decides where to go after hiring_process."""
+    if state.get("jd_reqs"):
+        return "jd_writer"
+    return "jd_input"
+
+def define_path(state: OverallState):
+    """Decides where to go after hiring_process."""
+    if state.get("intent") == "REVIEW":
+        return "hiring_process"
+    elif state.get("intent") == "WRITE":
+        return "jd_process"
+    return "router_input"
+
 # -- BUILD GRAPH --
 
 def build_graph():
@@ -454,8 +669,13 @@ def build_graph():
     workflow_main = StateGraph(OverallState)
 
     # Nodes
+    workflow_main.add_node("router_process",router_process_node)
+    workflow_main.add_node("router_input",router_input_node)
     workflow_main.add_node("hiring_process", hiring_process_node)
     workflow_main.add_node("hiring_input", hiring_input_node)
+    workflow_main.add_node("jd_process", jd_process_node)
+    workflow_main.add_node("jd_input", jd_input_node)
+    workflow_main.add_node("jd_writer", jd_writer_node)
     workflow_main.add_node("load_and_shard", load_and_shard)
     workflow_main.add_node("process_batch_subgraph", workflow_batch.compile())
     workflow_main.add_node("save_results", save_results_node)
@@ -464,15 +684,29 @@ def build_graph():
     workflow_main.add_node("qa_process", qa_process_node)
     
     # Edges
-    workflow_main.add_edge(START, "hiring_process")
+    workflow_main.add_edge(START, "router_process")
+    workflow_main.add_conditional_edges(
+        "router_process",
+        define_path,
+        ["hiring_process","router_input","jd_process"]
+    )
+    workflow_main.add_edge("router_input", "router_process")
+
     workflow_main.add_conditional_edges(
         "hiring_process",
         should_continue_hiring,
         ["load_and_shard", "hiring_input"]
     )
     workflow_main.add_edge("hiring_input", "hiring_process")
-
     
+    workflow_main.add_conditional_edges(
+        "jd_process",
+        should_continue_jd_requirement,
+        ["jd_writer", "jd_input"]
+    )
+    workflow_main.add_edge("jd_input", "jd_process")
+    workflow_main.add_edge("jd_writer", END)
+
     # Conditional Map
     workflow_main.add_conditional_edges(
         "load_and_shard",
