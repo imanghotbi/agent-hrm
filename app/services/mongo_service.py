@@ -1,9 +1,9 @@
-import logging
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import DESCENDING
-from src.config import config
+from app.config.config import config
+from app.config.logger import logger
 from utils.process_stracutre import enrich_resume_with_durations , fix_age_field
-logger = logging.getLogger(__name__)
+
 
 class MongoHandler:
     def __init__(self):

@@ -1,15 +1,16 @@
 import json
 from typing import Annotated, TypedDict, List
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.graph import StateGraph, START, END
+from app.services.llm_factory import LLMFactory
+from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.message import add_messages
+from langchain_core.output_parsers import StrOutputParser
 
-from src.config import config, logger
-from src.database import MongoHandler
+from app.config.logger import logger
+from app.services.mongo_service import MongoHandler
 from utils.prompt import QA_AGENT_SYSTEM_PROMPT
 
 # -- AGENT STATE --
@@ -20,7 +21,7 @@ class ResumeQAAgent:
     def __init__(self, db_structure: dict):
         self.db_structure = db_structure
         self.mongo = MongoHandler()
-        
+        self.parser = StrOutputParser()
         # -- DEFINE TOOLS --
         @tool
         async def search_database(query: str, projection: str = None):
@@ -57,11 +58,8 @@ class ResumeQAAgent:
         self.tools = [search_database]
         
         # -- INITIALIZE LLM --
-        self.llm = ChatGoogleGenerativeAI(
-            model=config.model_name,
-            google_api_key=config.google_api_key.get_secret_value(),
-            temperature=0
-        ).bind_tools(self.tools)
+        self.llm = LLMFactory().get_model(tools=self.tools)
+
 
         # -- BUILD INTERNAL GRAPH (Thought -> Action Loop) --
         workflow = StateGraph(QAAgentState)
@@ -87,4 +85,4 @@ class ResumeQAAgent:
         """Entry point for the agent."""
         inputs = {"messages": [HumanMessage(content=user_question)]}
         result = await self.graph.ainvoke(inputs)
-        return result["messages"][-1].content
+        return self.parser.invoke(result["messages"][-1])

@@ -1,15 +1,8 @@
 from pydantic import Field , SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import logging
 from urllib.parse import quote_plus
-import sys
 
-def setup_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)]
-    )
+
 
 class Settings(BaseSettings):
     # Required fields
@@ -32,10 +25,17 @@ class Settings(BaseSettings):
     ocr_workers: int = Field(default=5, validation_alias="OCR_WORKERS")
     structure_workers: int = Field(default=10, validation_alias="STRUCTURE_WORKERS")
     eval_workers: int = Field(default=10, validation_alias="EVAL_WORKERS")
+
     # LLM Parameters
     max_tokens: int = 20000
     top_p: float = 0.0
     thinking_budget: int = 5000
+
+    # logging
+    log_level:str = Field(default="INFO")
+    log_file_path:str = Field(default='logs/app.log')
+    log_max_bytes:int = Field(default=10485760)
+    log_backup_count:int = Field(default=5)
 
     # Configuration to load from .env file
     model_config = SettingsConfigDict(
@@ -52,5 +52,3 @@ class Settings(BaseSettings):
 
 # Instantiate the settings
 config = Settings()
-setup_logging()  # Initialize logging
-logger = logging.getLogger("IranHR_Agent")

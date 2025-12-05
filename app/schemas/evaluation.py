@@ -1,6 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel, Field
-from src.schemas.resume import ResumeData
+from app.schemas.resume import ResumeData
 
 # ==================================================
 # SUB-MODELS

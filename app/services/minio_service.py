@@ -1,6 +1,6 @@
 import aioboto3
 from botocore.exceptions import ClientError
-from src.config import config
+from app.config.config import config
 
 class MinioHandler:
     def __init__(self):

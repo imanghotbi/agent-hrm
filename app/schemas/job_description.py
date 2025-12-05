@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from enum import Enum
-from src.schemas.hiring import SeniorityLevel
+from app.schemas.hiring import SeniorityLevel
 # --- Enums ---
 class WorkMode(str, Enum):
     ON_SITE = "On-site"
