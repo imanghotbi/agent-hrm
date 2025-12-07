@@ -1,5 +1,6 @@
 import asyncio
 from langchain_core.messages import HumanMessage
+
 from app.config.config import config
 from app.config.logger import logger
 from app.services.llm_factory import LLMFactory
@@ -22,7 +23,7 @@ class ResumeAnalyzerService:
             prompt = STRUCTURE_PROMPT_TEMPLATE.format(raw_text=text)
             llm = LLMFactory.get_model(structured_output=ResumeData)
             
-            for attempt in range(1, 4):
+            for attempt in range(1, config.structure_max_retries+1):
                 try:
                     response = await llm.ainvoke([HumanMessage(content=prompt)])
                     data = response.model_dump(mode='json')

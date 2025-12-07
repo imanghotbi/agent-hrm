@@ -9,3 +9,4 @@ click
 motor
 pymongo
 jdatetime
+langgraph-checkpoint-mongodb

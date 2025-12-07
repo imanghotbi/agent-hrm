@@ -42,7 +42,9 @@ async def jd_process_node(state: OverallState):
                 logger.error(f"Validation Error: {e}")
                 err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
                 return {"jd_messages": [response, err_msg]}
-                
+    
+    text = parser.invoke(response)        
+    print(f"\n🤖 Agent Answer: {text}\n")            
     return {"jd_messages": [response]}
 
 def jd_input_node(state: OverallState):

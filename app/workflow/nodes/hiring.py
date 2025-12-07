@@ -1,12 +1,16 @@
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import  END
+from langchain_core.output_parsers import StrOutputParser
+
 from app.config.logger import logger
 from app.services.llm_factory import LLMFactory
 from app.workflow.llm_tools import AgentTools
 from app.schemas.hiring import HiringRequirements
 from app.workflow.state import OverallState
 from utils.prompt import HIRING_AGENT_PROMPT
+
+parser = StrOutputParser()
 
 async def hiring_process_node(state: OverallState):
     """
@@ -44,7 +48,9 @@ async def hiring_process_node(state: OverallState):
                 logger.error(f"Validation Error: {e}")
                 err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
                 return {"hiring_messages": [response, err_msg]}
-    
+            
+    text = parser.invoke(response)        
+    print(f"\n🤖 Agent Answer: {text}\n")     
     return {"hiring_messages": [response]}
 
 def hiring_input_node(state: OverallState):

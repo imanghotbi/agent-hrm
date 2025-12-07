@@ -191,6 +191,7 @@ Your goal is to provide a detailed **Comparative Analysis** to help a Hiring Man
 2. **Side-by-Side Table**: Compare them on: Skills, Experience, Education, and Soft Skills.
 3. **Strengths & Weaknesses**: Bullet points for each candidate.
 4. **Final Recommendation**: Who should be interviewed first and why?
+5. **Speak in Persian (Farsi).**
 
 Output in clean Markdown.
 """

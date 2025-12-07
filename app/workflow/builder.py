@@ -131,4 +131,4 @@ def build_graph():
     workflow.add_edge("compare_qa_input", "compare_qa_process")
     workflow.add_edge("compare_qa_process", "compare_qa_input")
 
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow

@@ -1,6 +1,7 @@
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import START , END
+from langchain_core.output_parsers import StrOutputParser
 
 from app.config.logger import logger
 from app.services.llm_factory import LLMFactory
@@ -8,12 +9,13 @@ from app.workflow.llm_tools import AgentTools
 from app.workflow.state import OverallState
 from utils.prompt import ROUTER_PROMPT
 
+parser = StrOutputParser()
+
 async def router_process_node(state: OverallState):
     """
     Acts as the Receptionist. Explains features and asks for request.
     """
     messages = state["start_message"]
-    
     # Ensure system prompt is present
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=ROUTER_PROMPT)] + messages
@@ -35,6 +37,8 @@ async def router_process_node(state: OverallState):
                 err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
                 return {"start_message": [response, err_msg]}
 
+    text = parser.invoke(response)        
+    print(f"\n🤖 Agent Answer: {text}\n")     
     return {"start_message": [response]}
 
 def router_input_node(state: OverallState):

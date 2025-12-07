@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     google_api_key: SecretStr
     minio_secret_key: SecretStr
     minio_access_key: str = "hrm_resume"
+    structure_max_retries:int = Field(default=3)
     
     # Optional fields with defaults for minIO
     minio_endpoint: str = "http://5.75.206.1:9000"
