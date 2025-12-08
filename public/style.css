@@ -1,0 +1,59 @@
+/* public/style.css */
+@font-face {
+    font-family: 'vazir';
+    src: url("/public/fonts/Vazirmatn-Regular.ttf") format('truetype');
+}
+
+body, #chat-input, .cl-app, textarea, input, button, .user-message-content, .assistant-message-content {
+    font-family: 'vazir', sans-serif !important;
+}
+
+body, .cl-app {
+    direction: rtl;
+    text-align: right;
+}
+
+textarea, input {
+    direction: rtl;
+    text-align: right;
+}
+
+.user-message-content {
+    text-align: right;
+    direction: rtl;
+}
+
+.assistant-message-content {
+    text-align: right;
+    direction: rtl;
+}
+
+pre, code, .code-block {
+    direction: ltr !important;
+    text-align: left !important;
+}
+
+div#message-composer div.flex.items-center.justify-between {
+    display: flex;
+    flex-direction: row-reverse;
+}
+
+.watermark div {
+    display: none !important;
+}
+
+.watermark::after {
+    content: "دستیار هوشمند منابع انسانی";
+    visibility: visible;
+    display: block;
+    text-align: center;
+    color: #ffffff;
+    font-size: 0.8rem;
+    font-family: 'vazir', sans-serif;
+    margin-top: 5px;
+}
+
+/* 
+#welcome-screen {
+    display: none !important;
+} */
