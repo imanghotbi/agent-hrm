@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional , Union
 from enum import Enum
 from app.schemas.hiring import SeniorityLevel
 # --- Enums ---
@@ -85,7 +85,7 @@ class JobDescriptionRequest(BaseModel):
         default=["Bimeh Tamin Ejtemaei (Social Security)", "Bimeh Takmili (Supplementary Insurance)"], 
         description="Perks and benefits"
     )
-    salary: Optional[SalaryRange] = Field(None, description="Salary expectations")
+    salary: Optional[Union[SalaryRange,str]] = Field(None, description="Salary expectations")
     
     # Local Compliance
     military_service: MilitaryServiceRequirement = Field(

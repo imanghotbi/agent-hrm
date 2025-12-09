@@ -32,9 +32,9 @@ class PersonalInfo(BaseModel):
     email: Optional[EmailStr] = Field(None, description="Primary email address.")
     phone_number: Optional[str] = Field(None, description="Mobile or landline number.")
     location: Optional[str] = Field(None, description="City and Country (e.g., Tehran, Iran).")
-    linkedin_url: Optional[HttpUrl] = None
-    github_url: Optional[HttpUrl] = None
-    website: Optional[HttpUrl] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    website: Optional[str] = None
     telegram_handle: Optional[str] = Field(None, pattern=r"^@?[a-zA-Z0-9_]{5,}$", description="Telegram username starting with @.")
     date_of_birth: Optional[str] = Field(None, description="YYYY-MM-DD or Jalali date string.")
     age: Optional[int] = Field(None, description="Age in years.")
