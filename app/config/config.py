@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Mongo Config
     mongo_endpoint: str
     mongo_db_name: str
+    mongo_db_usage: str
     mongo_collection: str
     mongo_username: str
     mongo_password: SecretStr

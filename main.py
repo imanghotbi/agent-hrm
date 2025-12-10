@@ -12,6 +12,7 @@ from langchain_core.output_parsers import StrOutputParser
 from app.services.minio_service import MinioHandler
 from app.workflow.builder import build_graph
 from app.config.config import config
+from app.config.logger import logger
 
 # Initialize services
 mongo_client = MongoClient(config.mongo_uri)
@@ -21,7 +22,7 @@ checkpointer = MongoDBSaver(mongo_client)
 
 @cl.on_chat_start
 async def start():
-    print("🚀 Session Started")
+    logger.info("🚀 Session Started")
     await minio.ensure_bucket()
 
     # --- Step 1: Initial Upload ---
@@ -67,6 +68,7 @@ async def start():
 
     # --- Step 3: Start the Graph ---
     initial_inputs = {
+        "session_id": thread_id,
         "all_files": uploaded_keys,
         "start_message": [HumanMessage(content='Introduce yourself.')]
     }
@@ -87,14 +89,14 @@ async def run_graph_cycle(input_data):
     graph = cl.user_session.get("graph")
     config = cl.user_session.get("config")
     
-    print(f"🔄 DEBUG: Starting cycle with input: {input_data}") # DEBUG LOG
+    logger.debug(f"🔄 DEBUG: Starting cycle with input: {input_data}") # DEBUG LOG
 
     try:
         # stream_mode="updates" allows us to react to node completion
         async for event in graph.astream(input_data, config=config, stream_mode="updates"):
             
             for node_name, updates in event.items():
-                print(f"📍 DEBUG: Node '{node_name}' finished.") # DEBUG LOG
+                logger.debug(f"📍 DEBUG: Node '{node_name}' finished.") # DEBUG LOG
                 
                 # --- Handle Outputs ---
                 if updates:
@@ -119,7 +121,7 @@ async def run_graph_cycle(input_data):
         
         if snapshot.next and snapshot.tasks[0].interrupts:
             interrupt_val = snapshot.tasks[0].interrupts[0].value
-            print(f"⏸️ DEBUG: Graph Interrupted. Value: {interrupt_val}") # DEBUG LOG
+            logger.debug(f"⏸️ DEBUG: Graph Interrupted. Value: {interrupt_val}") # DEBUG LOG
             
             # --- SCENARIO A: Graph wants a FILE UPLOAD ---
             if isinstance(interrupt_val, dict) and interrupt_val.get("type") == "compare_upload":
@@ -145,7 +147,7 @@ async def run_graph_cycle(input_data):
                     
                     # CRITICAL FIX: Ensure we have keys before resuming
                     if uploaded_keys:
-                        print(f"▶️ DEBUG: Resuming with files: {uploaded_keys}")
+                        logger.debug(f"▶️ DEBUG: Resuming with files: {uploaded_keys}")
                         # Resume the graph immediately
                         await run_graph_cycle(Command(resume=uploaded_keys))
                     else:
@@ -157,5 +159,5 @@ async def run_graph_cycle(input_data):
                 return
 
     except Exception as e:
-        print(f"❌ ERROR in run_graph_cycle: {e}")
+        logger.error(f"❌ ERROR in run_graph_cycle: {e}")
         await cl.Message(content=f"An error occurred: {str(e)}").send()

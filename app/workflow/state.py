@@ -17,6 +17,9 @@ class BatchState(TypedDict):
     evaluated_results: List[Dict[str, Any]]
 
 class OverallState(TypedDict):
+    #run_id
+    session_id : Annotated[str, update_latest]
+    
     # Router
     intent: Annotated[Literal["REVIEW", "WRITE", "COMPARE"], update_latest]
     start_message: Annotated[List[BaseMessage], add_messages]

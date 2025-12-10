@@ -1,6 +1,7 @@
 import aioboto3
 from botocore.exceptions import ClientError
 from app.config.config import config
+from app.config.logger import logger
 
 class MinioHandler:
     def __init__(self):
@@ -23,7 +24,7 @@ class MinioHandler:
     async def upload_file(self, file_path: str, object_name: str):
         async with self.session.client("s3", **self.config) as s3:
             await s3.upload_file(file_path, config.minio_bucket, object_name)
-            print(f"✅ Uploaded: {object_name}")
+            logger.info(f"✅ Uploaded: {object_name}")
 
     async def list_files(self) -> list[str]:
         async with self.session.client("s3", **self.config) as s3:

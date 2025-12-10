@@ -10,6 +10,7 @@ class MongoHandler:
         self.client = AsyncIOMotorClient(config.mongo_uri)
         self.db = self.client[config.mongo_db_name]
         self.collection = self.db[config.mongo_collection]
+        self.usage_logs = self.db[config.mongo_db_usage]
 
     async def save_candidate(self, resume_data: dict):
         """Saves or updates a candidate."""
@@ -29,6 +30,10 @@ class MongoHandler:
         """Retrieves top N candidates sorted by final_score."""
         cursor = self.collection.find().sort("final_score", DESCENDING).limit(limit)
         return await cursor.to_list(length=limit)
+
+    async def save_doc(self,collection_name,data):
+        result = await collection_name.insert_one(data)
+        return result
 
     async def execute_raw_query(self, query: dict , projection: dict = None):
         """Executes a generated query (for the Q&A feature)."""

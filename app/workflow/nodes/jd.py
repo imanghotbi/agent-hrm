@@ -1,3 +1,4 @@
+import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import  END
@@ -9,7 +10,7 @@ from app.workflow.llm_tools import AgentTools
 from app.schemas.job_description import JobDescriptionRequest
 from app.workflow.state import OverallState
 from utils.prompt import JD_REQUIREMENTS_GATHER, JD_WRITER_PROMPT
-
+from utils.extract_structure import save_token_cost
 parser = StrOutputParser()
 
 async def jd_process_node(state: OverallState):
@@ -17,6 +18,7 @@ async def jd_process_node(state: OverallState):
     Interviews the user to gather JD requirements.
     """
     messages = state.get("jd_messages")
+    session_id = state["session_id"]
     if not messages:
         messages = [state['start_message'][-1]]
         state["jd_messages"] = messages
@@ -26,7 +28,8 @@ async def jd_process_node(state: OverallState):
 
     llm = LLMFactory.get_model(tools=[AgentTools.submit_jd_requirements])
     response = await llm.ainvoke(messages)
-    
+    asyncio.create_task(save_token_cost("jd_process_node", session_id, response))
+
     if response.tool_calls:
         tool_call = response.tool_calls[0]
         if tool_call["name"] == "submit_jd_requirements":
@@ -63,6 +66,7 @@ async def jd_writer_node(state: OverallState):
     Generates the Job Description text.
     """
     reqs = state["jd_reqs"]
+    session_id = state["session_id"]
     logger.info("✍️ Generating Job Description...")
     
     prompt = JD_WRITER_PROMPT.format(reqs_json=reqs.model_dump_json())
@@ -71,6 +75,7 @@ async def jd_writer_node(state: OverallState):
     llm = LLMFactory.get_model(temperature=0.7)
     
     response = await llm.ainvoke([HumanMessage(content=prompt)])
+    asyncio.create_task(save_token_cost("jd_writer_node", session_id, response))
     text = parser.invoke(response)
     
     print("\n" + "="*40)

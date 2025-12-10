@@ -1,3 +1,4 @@
+import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import START , END
@@ -8,7 +9,7 @@ from app.services.llm_factory import LLMFactory
 from app.workflow.llm_tools import AgentTools
 from app.workflow.state import OverallState
 from utils.prompt import ROUTER_PROMPT
-
+from utils.extract_structure import save_token_cost
 parser = StrOutputParser()
 
 async def router_process_node(state: OverallState):
@@ -16,6 +17,7 @@ async def router_process_node(state: OverallState):
     Acts as the Receptionist. Explains features and asks for request.
     """
     messages = state["start_message"]
+    session_id = state["session_id"]
     # Ensure system prompt is present
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=ROUTER_PROMPT)] + messages
@@ -23,6 +25,7 @@ async def router_process_node(state: OverallState):
     llm = LLMFactory.get_model(tools=[AgentTools.router_tool])
     
     response = await llm.ainvoke(messages)
+    asyncio.create_task(save_token_cost("router_process_node", session_id, response))
     
     if response.tool_calls:
         tool_call = response.tool_calls[0]

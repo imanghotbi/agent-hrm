@@ -1,3 +1,4 @@
+import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import  END
@@ -9,6 +10,7 @@ from app.workflow.llm_tools import AgentTools
 from app.schemas.hiring import HiringRequirements
 from app.workflow.state import OverallState
 from utils.prompt import HIRING_AGENT_PROMPT
+from utils.extract_structure import save_token_cost
 
 parser = StrOutputParser()
 
@@ -19,6 +21,7 @@ async def hiring_process_node(state: OverallState):
     """
     # Get history or initialize
     messages = state.get("hiring_messages")
+    session_id = state["session_id"]
     if not messages:
         # Carry over the last message from the router phase as context
         messages = [state['start_message'][-1]]
@@ -31,6 +34,7 @@ async def hiring_process_node(state: OverallState):
     # Call LLM
     llm = LLMFactory.get_model(tools=[AgentTools.submit_hiring_requirements])
     response = await llm.ainvoke(messages)
+    asyncio.create_task(save_token_cost("hiring_process_node", session_id, response))
     
     # Check if tool called
     if response.tool_calls:

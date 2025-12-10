@@ -28,5 +28,3 @@ def fix_age_field(resume:Dict) -> Dict:
             resume['resume']['personal_info']['age'] = data_calculater.calculate_age(data_of_birth)
             return resume
         return resume
-    
-

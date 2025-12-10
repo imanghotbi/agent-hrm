@@ -1,7 +1,10 @@
 import pymongo
+from typing import Dict
 from bson import ObjectId
 from datetime import datetime
+from app.services.mongo_service import MongoHandler
 
+mongo_db = MongoHandler()
 
 class ExtractSchema:
     def __init__(self , mongo_uri , db_name , collection_name):
@@ -37,3 +40,14 @@ class ExtractSchema:
         else:
             # Return the type name (e.g., 'str', 'int', 'bool', 'float')
             return type(doc).__name__
+
+async def save_token_cost(node_name:str , session_id:str , response) -> Dict:
+    token_usage = response.response_metadata['token_usage']
+    del token_usage['is_byok']
+    data = {
+        'node_name': node_name,
+        'session_id': session_id,
+        **token_usage
+    }
+    result = await mongo_db.save_doc(mongo_db.usage_logs , data)
+    return result

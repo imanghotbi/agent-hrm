@@ -38,10 +38,10 @@ async def qa_process_node(state: OverallState):
     """
     question = state["current_question"]
     structure = state["db_structure"]
-    
+    session_id = state['session_id']
     # We instantiate the agent here. 
     # ResumeQAAgent from src/matcher.py is robust enough to act as a service.
-    agent = ResumeQAAgent(structure)
+    agent = ResumeQAAgent(structure , session_id)
     answer = await agent.run(question)
     
     print(f"\n🤖 Agent Answer: {answer}\n")

@@ -8,6 +8,7 @@ from app.schemas.resume import ResumeData
 from app.schemas.evaluation import ResumeEvaluation
 from app.schemas.hiring import HiringRequirements
 from utils.prompt import STRUCTURE_PROMPT_TEMPLATE, SCORING_PROMPT
+from utils.extract_structure import save_token_cost
 
 class ResumeAnalyzerService:
     
@@ -15,7 +16,7 @@ class ResumeAnalyzerService:
         self.struct_sem = asyncio.Semaphore(config.structure_workers)
         self.eval_sem = asyncio.Semaphore(config.eval_workers)
 
-    async def structure_text(self, file_key: str, text: str) -> dict | None:
+    async def structure_text(self, file_key: str, text: str , session_id:str) -> dict | None:
         if not text:
             return None
             
@@ -26,6 +27,7 @@ class ResumeAnalyzerService:
             for attempt in range(1, config.structure_max_retries+1):
                 try:
                     response = await llm.ainvoke([HumanMessage(content=prompt)])
+                    asyncio.create_task(save_token_cost('batch_structure_node', session_id , response))
                     data = response.model_dump(mode='json')
                     data["_source_file"] = file_key
                     logger.info(f"✅ [STRUCT DONE] {file_key}")
@@ -37,7 +39,7 @@ class ResumeAnalyzerService:
                         await asyncio.sleep(attempt)
             return None
 
-    async def evaluate_resume(self, resume_dict: dict, reqs: HiringRequirements) -> dict | None:
+    async def evaluate_resume(self, resume_dict: dict, reqs: HiringRequirements, session_id:str) -> dict | None:
         async with self.eval_sem:
             try:
                 resume_obj = ResumeData(**resume_dict)
@@ -48,7 +50,7 @@ class ResumeAnalyzerService:
                 
                 llm = LLMFactory.get_model(structured_output=ResumeEvaluation)
                 eval_result = await llm.ainvoke([HumanMessage(content=prompt)])
-                
+                asyncio.create_task(save_token_cost('batch_evaluate_node', session_id , eval_result))
                 # Logic: Weighted Calculation
                 w = reqs.weights
                 s = eval_result

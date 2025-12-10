@@ -2,15 +2,18 @@ import asyncio
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import END
+from langchain_core.output_parsers import StrOutputParser
+
 from app.config.logger import logger
 from app.services.minio_service import MinioHandler
 from app.services.ocr import OCRService
 from app.services.llm_factory import LLMFactory
 from app.workflow.state import OverallState
+
 from utils.prompt import COMPARISON_PROMPT, COMPARE_QA_PROMPT
-from langchain_core.output_parsers import StrOutputParser
+from utils.extract_structure import save_token_cost
+
 # Reuse the OCR service (or create new if you want separate limits)
-ocr_service = OCRService()
 parser = StrOutputParser()
 
 def compare_input_node(state: OverallState):
@@ -30,11 +33,13 @@ async def compare_process_node(state: OverallState):
     1. OCR the selected files.
     2. Generate Comparison Report.
     """
+    session_id = state["session_id"]
     files = state["compare_files"][:3] 
     logger.info(f"⚖️ Comparing {len(files)} resumes...")
     
     minio = MinioHandler()
-    
+    ocr_service = OCRService(node_name='compare_process_node_ocr', session_id=session_id)
+
     tasks = [ocr_service.process_file(minio, f) for f in files]
     results = await asyncio.gather(*tasks)
     
@@ -51,6 +56,7 @@ async def compare_process_node(state: OverallState):
     llm = LLMFactory.get_model(temperature=0.2)
     
     report = await llm.ainvoke([HumanMessage(content=prompt)])
+    asyncio.create_task(save_token_cost("compare_process_node", session_id, report))
     report_content = parser.invoke(report)
     
     print("\n" + "="*40)
@@ -73,11 +79,13 @@ async def compare_qa_process_node(state: OverallState):
     """Answers questions based on the comparison context."""
     context = state["comparison_context"]
     question = state["current_question"]
+    session_id = state["session_id"]
     
     prompt = COMPARE_QA_PROMPT.format(context=context, question=question)
     llm = LLMFactory.get_model()
     
     response = await llm.ainvoke([HumanMessage(content=prompt)])
+    asyncio.create_task(save_token_cost("compare_qa_process_node", session_id, response))
     response_content = parser.invoke(response)
     print(f"\n🤖 Comparison Assistant: {response_content}\n")
     return {"compare_qa_answer": response_content}

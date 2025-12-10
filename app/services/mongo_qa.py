@@ -1,5 +1,6 @@
 import json
 from typing import Annotated, TypedDict, List
+import asyncio
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
@@ -12,16 +13,18 @@ from langchain_core.output_parsers import StrOutputParser
 from app.config.logger import logger
 from app.services.mongo_service import MongoHandler
 from utils.prompt import QA_AGENT_SYSTEM_PROMPT
+from utils.extract_structure import save_token_cost
 
 # -- AGENT STATE --
 class QAAgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
 
 class ResumeQAAgent:
-    def __init__(self, db_structure: dict):
+    def __init__(self, db_structure: dict, session_id:str):
         self.db_structure = db_structure
         self.mongo = MongoHandler()
         self.parser = StrOutputParser()
+        self.session_id = session_id
         # -- DEFINE TOOLS --
         @tool
         async def search_database(query: str, projection: str = None):
@@ -79,6 +82,7 @@ class ResumeQAAgent:
         sys_msg = SystemMessage(content=QA_AGENT_SYSTEM_PROMPT.format(structure=self.db_structure))
         # We prepend it to the context sent to API
         response = await self.llm.ainvoke([sys_msg] + messages)
+        asyncio.create_task(save_token_cost("qa_process_node", self.session_id, response))
         return {"messages": [response]}
 
     async def run(self, user_question: str) -> str:
