@@ -8,7 +8,7 @@ from app.config.logger import logger
 from app.services.llm_factory import LLMFactory
 from app.services.minio_service import MinioHandler
 from utils.prompt import OCR_PROMPT
-from utils.extract_structure import save_token_cost
+from utils.helper import save_token_cost
 
 class OCRService:
     def __init__(self, node_name:str, session_id:str):

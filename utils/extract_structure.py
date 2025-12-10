@@ -40,14 +40,3 @@ class ExtractSchema:
         else:
             # Return the type name (e.g., 'str', 'int', 'bool', 'float')
             return type(doc).__name__
-
-async def save_token_cost(node_name:str , session_id:str , response) -> Dict:
-    token_usage = response.response_metadata['token_usage']
-    del token_usage['is_byok']
-    data = {
-        'node_name': node_name,
-        'session_id': session_id,
-        **token_usage
-    }
-    result = await mongo_db.save_doc(mongo_db.usage_logs , data)
-    return result

@@ -8,7 +8,7 @@ from app.schemas.resume import ResumeData
 from app.schemas.evaluation import ResumeEvaluation
 from app.schemas.hiring import HiringRequirements
 from utils.prompt import STRUCTURE_PROMPT_TEMPLATE, SCORING_PROMPT
-from utils.extract_structure import save_token_cost
+from utils.helper import save_token_cost
 
 class ResumeAnalyzerService:
     

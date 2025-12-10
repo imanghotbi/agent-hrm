@@ -43,6 +43,9 @@ class OverallState(TypedDict):
     current_question: Annotated[str, update_latest]
     qa_answer: str
 
+    #top_cadidate
+    top_candidate: str
+
     # Compare Phase State
     compare_files: List[str]
     comparison_context: str

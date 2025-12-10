@@ -10,7 +10,7 @@ from app.workflow.llm_tools import AgentTools
 from app.schemas.hiring import HiringRequirements
 from app.workflow.state import OverallState
 from utils.prompt import HIRING_AGENT_PROMPT
-from utils.extract_structure import save_token_cost
+from utils.helper import save_token_cost
 
 parser = StrOutputParser()
 

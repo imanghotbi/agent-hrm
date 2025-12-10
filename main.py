@@ -106,6 +106,9 @@ async def run_graph_cycle(input_data):
                     if "qa_answer" in updates:
                         await cl.Message(content=updates["qa_answer"]).send()
 
+                    if "top_candidate" in updates:
+                        await cl.Message(content=updates["top_candidate"]).send()
+                        
                 # Handle Streaming Chat Messages
                 for message_key in ["start_message", "jd_messages", "hiring_messages"]:
                     if updates:

@@ -13,7 +13,7 @@ from langchain_core.output_parsers import StrOutputParser
 from app.config.logger import logger
 from app.services.mongo_service import MongoHandler
 from utils.prompt import QA_AGENT_SYSTEM_PROMPT
-from utils.extract_structure import save_token_cost
+from utils.helper import save_token_cost
 
 # -- AGENT STATE --
 class QAAgentState(TypedDict):

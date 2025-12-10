@@ -89,6 +89,7 @@ def build_graph():
     workflow.add_node("prepare_qa", qa.prepare_qa_node)
     workflow.add_node("qa_input", qa.qa_input_node)
     workflow.add_node("qa_process", qa.qa_process_node)
+    workflow.add_node("top_candidates", qa.top_candidates_node)
 
     # Edges
     workflow.add_edge(START, "router_process")
@@ -120,7 +121,8 @@ def build_graph():
         ["process_batch_subgraph"]
     )
     workflow.add_edge("process_batch_subgraph", "save_results")
-    workflow.add_edge("save_results", "prepare_qa")
+    workflow.add_edge("save_results", "top_candidates")
+    workflow.add_edge("top_candidates", "prepare_qa")
     workflow.add_edge("prepare_qa", "qa_input")
     
     workflow.add_edge("qa_input", "qa_process")

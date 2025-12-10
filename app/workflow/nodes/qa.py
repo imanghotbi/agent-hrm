@@ -1,11 +1,21 @@
-from langgraph.types import Command, interrupt
+import asyncio
 from langgraph.graph import END
+from langgraph.types import Command, interrupt
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 
 from app.config.config import config
 from app.config.logger import logger
 from app.services.mongo_qa import ResumeQAAgent
+from app.services.mongo_service import MongoHandler
+from app.services.llm_factory import LLMFactory
 from app.workflow.state import OverallState
 from utils.extract_structure import ExtractSchema
+from utils.helper import save_token_cost , candidate_summary
+from utils.prompt import TOP_CANDIDATE
+
+mongo_handler = MongoHandler()
+parser = StrOutputParser()
 
 async def prepare_qa_node(state: OverallState):
     """
@@ -39,10 +49,22 @@ async def qa_process_node(state: OverallState):
     question = state["current_question"]
     structure = state["db_structure"]
     session_id = state['session_id']
-    # We instantiate the agent here. 
-    # ResumeQAAgent from src/matcher.py is robust enough to act as a service.
     agent = ResumeQAAgent(structure , session_id)
     answer = await agent.run(question)
     
     print(f"\n🤖 Agent Answer: {answer}\n")
     return {"qa_answer": answer}
+
+async def top_candidates_node(state: OverallState):
+    session_id = state['session_id']
+    top_candidates = await mongo_handler.get_top_candidates(3)
+    top_candidates_summary = candidate_summary(top_candidates)
+
+    prompt = TOP_CANDIDATE.format(top_candidate_summary=top_candidates_summary)
+    llm = LLMFactory.get_model()
+    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    asyncio.create_task(save_token_cost('top_candidates_node', session_id , response))
+    answer = parser.invoke(response)
+
+    print(f"\n🤖 Agent Answer: {answer}\n")
+    return {"top_candidate": answer}

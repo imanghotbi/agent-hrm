@@ -11,7 +11,7 @@ from app.services.llm_factory import LLMFactory
 from app.workflow.state import OverallState
 
 from utils.prompt import COMPARISON_PROMPT, COMPARE_QA_PROMPT
-from utils.extract_structure import save_token_cost
+from utils.helper import save_token_cost
 
 # Reuse the OCR service (or create new if you want separate limits)
 parser = StrOutputParser()
