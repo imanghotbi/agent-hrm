@@ -102,7 +102,7 @@ class Project(BaseModel):
     project_name: Optional[str] = None
     description: Optional[str] = None
     technologies: Optional[List[str]] = None
-    github_repo: Optional[HttpUrl] = None
+    github_repo: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
 

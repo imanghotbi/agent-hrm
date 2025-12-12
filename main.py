@@ -71,11 +71,11 @@ async def run_graph_cycle(input_data):
             
             for node_name, updates in event.items():
                 logger.debug(f"📍 DEBUG: Node '{node_name}' finished.") # DEBUG LOG
-                
+                msg = cl.Message(content=f"...رزومه‌ها در حال بررسی هستند")
                 # --- Handle Outputs ---
                 if updates:
                     if "final_jd" in updates:
-                        await cl.Message(content=f"**Generated Job Description:**\n\n{updates['final_jd']}").send()
+                        await cl.Message(content=f"**شرح شغلی ایجاد شده:**\n\n{updates['final_jd']}").send()
                     
                     if "qa_answer" in updates:
                         await cl.Message(content=updates["qa_answer"]).send()
@@ -83,6 +83,17 @@ async def run_graph_cycle(input_data):
                     if "top_candidate" in updates:
                         await cl.Message(content=updates["top_candidate"]).send()
 
+                    if "load_and_shard" in node_name:
+                        await msg.send()
+
+                    if "process_batch_subgraph" in node_name or "compare_process" in node_name:
+                        msg.content = "رزومه در حال ocr هستند"
+                        await msg.update()
+
+                    if "save_results" in node_name:
+                        msg.content = "فرآیند ارزیایی و نمره دهی به اتمام رسید."
+                        await msg.update() 
+                        
                 # Handle Streaming Chat Messages
                 for message_key in ["start_message", "jd_messages", "hiring_messages", "comparison_context","compare_qa_answer"]:
                     if updates:
@@ -114,31 +125,29 @@ async def run_graph_cycle(input_data):
 
                 if res and res.get("payload",{}).get("value") == "yes":
                     files = await cl.AskFileMessage(
-                        content="Upload the PDF file(s) for comparison.",
+                        content="رزومه‌های مورد نیاز را آپلود کنید.",
                         accept=["application/pdf"],
                         max_size_mb=20,
                         max_files=20,
                         timeout=600 
                     ).send()
-                    
+
                     if files:
-                        msg = cl.Message(content=f"Uploading {len(files)} files...")
+                        msg = cl.Message(content=f"در حال آپلود {len(files)} فایل ...")
                         await msg.send()
                         
                         bucket_name = interrupt_val.get("bucket_name")
                         uploaded_keys = await upload_resume_to_minio(files , bucket_name)
-                        msg.content = f"✅ Done. Uploaded {len(files)} files."
-                        await msg.update()
                         if uploaded_keys:
-                            msg.content = f"✅ Done. Uploaded {len(files)} files."
+                            msg.content = f"✅ آپلود {len(files)} فایل انجام شد."
                             await msg.update()
                             logger.debug(f"▶️ DEBUG: Resuming with files: {uploaded_keys}")
                             # Resume the graph immediately
                             await run_graph_cycle(Command(resume=uploaded_keys))
                         else:
-                            await cl.Message(content="❌ No file keys generated. Stopping.").send()
+                            await cl.Message(content="❌ خطایی رخ داده است").send()
                     else:
-                        await cl.Message(content="❌ Upload cancelled or timed out.").send()
+                        await cl.Message(content="❌ آپلود کنسل یا ارتباط قطع شد.").send()
                 else:
                     msg = cl.Message(content=f"رزومه های ذخیره شده بررسی می شود.")
                     await msg.send()
@@ -149,4 +158,4 @@ async def run_graph_cycle(input_data):
 
     except Exception as e:
         logger.error(f"❌ ERROR in run_graph_cycle: {e}")
-        await cl.Message(content=f"An error occurred: {str(e)}").send()
+        await cl.Message(content=f"خطایی رخ داده است: {str(e)}").send()
