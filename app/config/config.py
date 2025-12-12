@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     minio_endpoint: str = "http://5.75.206.1:9000"
     minio_resume_bucket: str = "resumes"
     minio_compare_bucket: str = "compare-resume"
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "google/gemini-2.5-flash"
     
     # Mongo Config
     mongo_endpoint: str

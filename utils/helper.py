@@ -22,12 +22,13 @@ def candidate_summary(top_candidate_resume) -> str:
     return text
 
 async def save_token_cost(node_name:str , session_id:str , response) -> Dict:
-    token_usage = response.response_metadata['token_usage']
+    token_usage = response.response_metadata.get('token_usage') or response.usage_metadata
     if 'is_byok' in token_usage:
         del token_usage['is_byok']  
     data = {
         'node_name': node_name,
         'session_id': session_id,
+        'model_name': response.response_metadata['model_name'],
         **token_usage
     }
     result = await mongo_db.save_doc(mongo_db.usage_logs , data)

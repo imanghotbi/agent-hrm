@@ -72,6 +72,18 @@ async def run_graph_cycle(input_data):
             for node_name, updates in event.items():
                 logger.debug(f"📍 DEBUG: Node '{node_name}' finished.") # DEBUG LOG
                 msg = cl.Message(content=f"...رزومه‌ها در حال بررسی هستند")
+
+                if "process_batch_subgraph" in node_name or "compare_process" in node_name:
+                    msg.content = "رزومه در حال ocr هستند"
+                    await msg.update()
+
+                if "save_results" in node_name:
+                    msg.content = "فرآیند ارزیایی و نمره دهی به اتمام رسید."
+                    await msg.update() 
+                
+                if "load_and_shard" in node_name:
+                        await msg.send()
+                        
                 # --- Handle Outputs ---
                 if updates:
                     if "final_jd" in updates:
@@ -83,16 +95,6 @@ async def run_graph_cycle(input_data):
                     if "top_candidate" in updates:
                         await cl.Message(content=updates["top_candidate"]).send()
 
-                    if "load_and_shard" in node_name:
-                        await msg.send()
-
-                    if "process_batch_subgraph" in node_name or "compare_process" in node_name:
-                        msg.content = "رزومه در حال ocr هستند"
-                        await msg.update()
-
-                    if "save_results" in node_name:
-                        msg.content = "فرآیند ارزیایی و نمره دهی به اتمام رسید."
-                        await msg.update() 
                         
                 # Handle Streaming Chat Messages
                 for message_key in ["start_message", "jd_messages", "hiring_messages", "comparison_context","compare_qa_answer"]:
