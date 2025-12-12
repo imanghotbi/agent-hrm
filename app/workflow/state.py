@@ -9,6 +9,7 @@ def update_latest(old, new):
     return new
 
 class BatchState(TypedDict):
+    session_id:str
     batch_id: int
     files_in_batch: List[str]
     ocr_results: Dict[str, str]

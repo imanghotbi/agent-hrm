@@ -5,6 +5,7 @@ from langgraph.graph import END
 from langchain_core.output_parsers import StrOutputParser
 
 from app.config.logger import logger
+from app.config.config import config
 from app.services.minio_service import MinioHandler
 from app.services.ocr import OCRService
 from app.services.llm_factory import LLMFactory
@@ -21,9 +22,9 @@ def compare_input_node(state: OverallState):
     Interrupts to ask user for the resumes (files) to compare.
     """
     msg = "📂 Please provide the resumes you want to compare (PDFs). You can upload up to 3 files."
-    user_input = interrupt(value={"type": "compare_upload", "msg": msg})
+    user_input = interrupt(value={"type": "compare_upload", "msg": msg, "bucket_name": config.minio_compare_bucket})
     
-    if not user_input or (isinstance(user_input, str) and str(user_input).lower() in ["exit", "quit"]):
+    if (isinstance(user_input, str) and str(user_input).lower() in ["exit", "quit"]):
         return Command(goto=END)
     
     return {"compare_files": user_input}
@@ -34,13 +35,17 @@ async def compare_process_node(state: OverallState):
     2. Generate Comparison Report.
     """
     session_id = state["session_id"]
-    files = state["compare_files"][:3] 
+    files = state["compare_files"]
+    minio = MinioHandler()
+    if len(files) == 0:
+        files = await minio.list_files(config.minio_compare_bucket)
+        logger.info(f"📂 Found {len(files)} total resumes.")
+
     logger.info(f"⚖️ Comparing {len(files)} resumes...")
     
-    minio = MinioHandler()
     ocr_service = OCRService(node_name='compare_process_node_ocr', session_id=session_id)
 
-    tasks = [ocr_service.process_file(minio, f) for f in files]
+    tasks = [ocr_service.process_file(minio, config.minio_compare_bucket, f) for f in files]
     results = await asyncio.gather(*tasks)
     
     combined_text = ""
@@ -65,8 +70,7 @@ async def compare_process_node(state: OverallState):
     print(report_content)
     print("\n" + "="*40 + "\n")
     
-    full_context = f"REPORT:\n{report_content}\n\nRAW RESUMES:{combined_text}"
-    return {"comparison_context": full_context}
+    return {"comparison_context": report_content}
 
 def compare_qa_input_node(state: OverallState):
     """Interrupt for Q&A on the comparison."""

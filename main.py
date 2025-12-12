@@ -10,6 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 # Your existing project imports
 from app.services.minio_service import MinioHandler
+from utils.helper import upload_resume_to_minio
 from app.workflow.builder import build_graph
 from app.config.config import config
 from app.config.logger import logger
@@ -23,37 +24,10 @@ checkpointer = MongoDBSaver(mongo_client)
 @cl.on_chat_start
 async def start():
     logger.info("🚀 Session Started")
-    await minio.ensure_bucket()
 
-    # --- Step 1: Initial Upload ---
-    res = await cl.AskActionMessage(
-        content="آیا می‌خواهید رزومه‌ها را از یک پوشه آپلود کنید؟",
-        actions=[
-            cl.Action(name="yes", payload={"value":"yes"}, label="بله, آپلود میکنم"),
-            cl.Action(name="no", payload={"value":"no"}, label="نه, فعلا"),
-        ]
-    ).send()
-
-    uploaded_keys = []
-    
-    if res and res.get("payload",{}).get("value") == "yes":
-        files = await cl.AskFileMessage(
-            content="Please drop your PDF resumes here.",
-            accept=["application/pdf"],
-            max_size_mb=20,
-            max_files=10
-        ).send()
-        
-        if files:
-            msg = cl.Message(content=f"Uploading {len(files)} files...")
-            await msg.send()
-            
-            tasks = [minio.upload_file(f.path, f.name) for f in files]
-            await asyncio.gather(*tasks)
-            uploaded_keys = [f.name for f in files]
-            
-            msg.content = f"✅ Done. Uploaded {len(files)} files."
-            await msg.update()
+    # --- Step 1: check bucket exist---
+    await minio.ensure_bucket(config.minio_resume_bucket)
+    await minio.ensure_bucket(config.minio_compare_bucket)
 
     # --- Step 2: Build & Compile Graph ---
     builder = build_graph()
@@ -69,7 +43,7 @@ async def start():
     # --- Step 3: Start the Graph ---
     initial_inputs = {
         "session_id": thread_id,
-        "all_files": uploaded_keys,
+        "all_files": [],
         "start_message": [HumanMessage(content='Introduce yourself.')]
     }
     
@@ -108,9 +82,9 @@ async def run_graph_cycle(input_data):
 
                     if "top_candidate" in updates:
                         await cl.Message(content=updates["top_candidate"]).send()
-                        
+
                 # Handle Streaming Chat Messages
-                for message_key in ["start_message", "jd_messages", "hiring_messages"]:
+                for message_key in ["start_message", "jd_messages", "hiring_messages", "comparison_context","compare_qa_answer"]:
                     if updates:
                         if message_key in updates:
                             new_msgs = updates[message_key]
@@ -118,6 +92,8 @@ async def run_graph_cycle(input_data):
                                 last_msg = new_msgs[-1]
                                 if last_msg.type == "ai" and last_msg.content:
                                     await cl.Message(content=parser.invoke(last_msg)).send()
+                            elif isinstance(new_msgs, str) and new_msgs:
+                                await cl.Message(content=parser.invoke(new_msgs)).send()
 
         # --- CYCLE FINISHED: Check state for Interrupts ---
         snapshot = await graph.aget_state(config)
@@ -127,37 +103,47 @@ async def run_graph_cycle(input_data):
             logger.debug(f"⏸️ DEBUG: Graph Interrupted. Value: {interrupt_val}") # DEBUG LOG
             
             # --- SCENARIO A: Graph wants a FILE UPLOAD ---
-            if isinstance(interrupt_val, dict) and interrupt_val.get("type") == "compare_upload":
+            if isinstance(interrupt_val, dict) and (interrupt_val.get("type") == "compare_upload" or interrupt_val.get("type") == "upload_resume"):
                 
-                bot_request = interrupt_val.get('msg', 'Please upload a file.')
-                await cl.Message(content=f"🤖 {bot_request}").send()
-                
-                files = await cl.AskFileMessage(
-                    content="Upload the PDF file(s) for comparison.",
-                    accept=["application/pdf"],
-                    max_size_mb=20,
-                    max_files=5,
-                    timeout=600 
-                ).send()
-                
-                if files:
-                    await cl.Message(content="📂 Uploading to MinIO...").send()
+                res = await cl.AskActionMessage(
+                content="آیا می‌خواهید رزومه‌ها را از یک پوشه آپلود کنید؟",
+                actions=[
+                    cl.Action(name="yes", payload={"value":"yes"}, label="بله, آپلود میکنم"),
+                    cl.Action(name="no", payload={"value":"no"}, label="نه, فعلا"),
+                ]).send()
+
+                if res and res.get("payload",{}).get("value") == "yes":
+                    files = await cl.AskFileMessage(
+                        content="Upload the PDF file(s) for comparison.",
+                        accept=["application/pdf"],
+                        max_size_mb=20,
+                        max_files=20,
+                        timeout=600 
+                    ).send()
                     
-                    tasks = [minio.upload_file(f.path, f.name) for f in files]
-                    await asyncio.gather(*tasks)
-                    
-                    uploaded_keys = [f.name for f in files]
-                    
-                    # CRITICAL FIX: Ensure we have keys before resuming
-                    if uploaded_keys:
-                        logger.debug(f"▶️ DEBUG: Resuming with files: {uploaded_keys}")
-                        # Resume the graph immediately
-                        await run_graph_cycle(Command(resume=uploaded_keys))
+                    if files:
+                        msg = cl.Message(content=f"Uploading {len(files)} files...")
+                        await msg.send()
+                        
+                        bucket_name = interrupt_val.get("bucket_name")
+                        uploaded_keys = await upload_resume_to_minio(files , bucket_name)
+                        msg.content = f"✅ Done. Uploaded {len(files)} files."
+                        await msg.update()
+                        if uploaded_keys:
+                            msg.content = f"✅ Done. Uploaded {len(files)} files."
+                            await msg.update()
+                            logger.debug(f"▶️ DEBUG: Resuming with files: {uploaded_keys}")
+                            # Resume the graph immediately
+                            await run_graph_cycle(Command(resume=uploaded_keys))
+                        else:
+                            await cl.Message(content="❌ No file keys generated. Stopping.").send()
                     else:
-                        await cl.Message(content="❌ No file keys generated. Stopping.").send()
+                        await cl.Message(content="❌ Upload cancelled or timed out.").send()
                 else:
-                    await cl.Message(content="❌ Upload cancelled or timed out.").send()
-        
+                    msg = cl.Message(content=f"رزومه های ذخیره شده بررسی می شود.")
+                    await msg.send()
+                    await run_graph_cycle(Command(resume=[]))
+
             elif interrupt_val in ["hiring_input", "router_node", "jd_node", "qa_input"]:
                 return
 

@@ -5,6 +5,7 @@ from langgraph.graph import  END
 from langchain_core.output_parsers import StrOutputParser
 
 from app.config.logger import logger
+from app.config.config import config
 from app.services.llm_factory import LLMFactory
 from app.workflow.llm_tools import AgentTools
 from app.schemas.hiring import HiringRequirements
@@ -67,3 +68,15 @@ def hiring_input_node(state: OverallState):
         return Command(goto=END)
         
     return {"hiring_messages": [HumanMessage(content=user_response)]}
+
+def upload_resume_node(state: OverallState):
+    """
+    Interrupts to ask user for resume files to process.
+    """
+    msg = "📂 Please upload the resumes (PDFs) you want to process."
+    user_input = interrupt(value={"type": "upload_resume", "msg": msg, "bucket_name": config.minio_resume_bucket})
+    
+    if (isinstance(user_input, str) and str(user_input).lower() in ["exit", "quit"]):
+        return Command(goto=END)
+    
+    return {"all_files": user_input}

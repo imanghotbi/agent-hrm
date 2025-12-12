@@ -214,6 +214,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+#chainlit
+.files/
 
 # --- IGNORE ---
 change.txt

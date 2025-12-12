@@ -1,19 +1,22 @@
 from pydantic import Field , SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
 from urllib.parse import quote_plus
 
 
 
 class Settings(BaseSettings):
     # Required fields
-    google_api_key: SecretStr
+    api_key: SecretStr
+    base_url: Optional[str] = Field(default=None)
     minio_secret_key: SecretStr
     minio_access_key: str = "hrm_resume"
     structure_max_retries:int = Field(default=3)
     
     # Optional fields with defaults for minIO
     minio_endpoint: str = "http://5.75.206.1:9000"
-    minio_bucket: str = "resumes"
+    minio_resume_bucket: str = "resumes"
+    minio_compare_bucket: str = "compare-resume"
     model_name: str = "gemini-2.5-flash"
     
     # Mongo Config

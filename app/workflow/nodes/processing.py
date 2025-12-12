@@ -1,6 +1,7 @@
 import asyncio
 
 from app.config.logger import logger
+from app.config.config import config
 from app.services.minio_service import MinioHandler
 from app.services.mongo_service import MongoHandler
 from app.services.ocr import OCRService
@@ -23,7 +24,7 @@ async def batch_ocr_node(state: BatchState):
     ocr_service = OCRService(node_name="batch_ocr_node", session_id=session_id)
     
     # Process concurrently using the service
-    tasks = [ocr_service.process_file(minio, f) for f in files]
+    tasks = [ocr_service.process_file(minio, config.minio_resume_bucket, f) for f in files]
     results = await asyncio.gather(*tasks)
     
     # Filter out failures
@@ -73,7 +74,7 @@ async def load_and_shard(state: OverallState):
     Loads all available file keys from MinIO.
     """
     minio = MinioHandler()
-    files = await minio.list_files()
+    files = await minio.list_files(config.minio_resume_bucket)
     logger.info(f"📂 Found {len(files)} total resumes.")
     return {"all_files": files}
 

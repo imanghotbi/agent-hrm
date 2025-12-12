@@ -26,6 +26,7 @@ def map_to_batches(state: OverallState):
         chunk = files[start_idx:end_idx]
         if chunk:
             batch_requests.append(Send("process_batch_subgraph", {
+                "session_id": state["session_id"],
                 "batch_id": i + 1,
                 "files_in_batch": chunk,
                 "hiring_reqs": reqs,
@@ -47,7 +48,7 @@ def define_path(state: OverallState):
 
 def should_continue_hiring(state: OverallState):
     """Decides where to go after hiring_process."""
-    return "load_and_shard" if state.get("hiring_reqs") else "hiring_input"
+    return "upload_resume" if state.get("hiring_reqs") else "hiring_input"
 
 def should_continue_jd(state: OverallState):
     return "jd_writer" if state.get("jd_reqs") else "jd_input"
@@ -72,6 +73,7 @@ def build_graph():
     
     workflow.add_node("hiring_process", hiring.hiring_process_node)
     workflow.add_node("hiring_input", hiring.hiring_input_node)
+    workflow.add_node("upload_resume", hiring.upload_resume_node)
     
     workflow.add_node("jd_process", jd.jd_process_node)
     workflow.add_node("jd_input", jd.jd_input_node)
@@ -103,7 +105,7 @@ def build_graph():
     workflow.add_conditional_edges(
         "hiring_process", 
         should_continue_hiring, 
-        ["load_and_shard", "hiring_input"]
+        ["upload_resume", "hiring_input"]
     )
     workflow.add_edge("hiring_input", "hiring_process")
 
@@ -115,6 +117,7 @@ def build_graph():
     workflow.add_edge("jd_input", "jd_process")
     workflow.add_edge("jd_writer", END)
 
+    workflow.add_edge("upload_resume","load_and_shard")
     workflow.add_conditional_edges(
         "load_and_shard", 
         map_to_batches, 

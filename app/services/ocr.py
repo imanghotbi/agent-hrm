@@ -16,11 +16,11 @@ class OCRService:
         self.node_name = node_name
         self.session_id = session_id
 
-    async def process_file(self, minio: MinioHandler, file_key: str) -> tuple[str, str | None]:
+    async def process_file(self, minio: MinioHandler, bucket_name:str ,file_key: str) -> tuple[str, str | None]:
         async with self.semaphore:
             try:
                 logger.info(f"🔹 [OCR START] {file_key}")
-                pdf_bytes = await minio.download_file_bytes(file_key)
+                pdf_bytes = await minio.download_file_bytes(bucket_name,file_key)
                 
                 # Run CPU-bound image conversion in a separate thread
                 images = await asyncio.to_thread(convert_from_bytes, pdf_bytes, fmt='png', dpi=300)
