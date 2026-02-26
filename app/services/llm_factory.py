@@ -3,12 +3,19 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from app.config.config import config
 from typing import Optional, Sequence, Union
 
+
 class LLMFactory:
     @staticmethod
-    def get_model(temperature: float = 0.0,
-                top_p:Optional[float] = None, max_output_tokens:Optional[int] = None,
-                structured_output=None, tools:Optional[list]=None,model_name: Optional[str] = None):
-            
+    def get_model(
+        temperature: float = 0.0,
+        thinking_budget: Optional[int] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        structured_output=None,
+        include_raw: bool = False,
+        tools: Optional[list] = None,
+        model_name: Optional[str] = None,
+    ):
         resolved_model = model_name or (
             config.structured_model_name if structured_output else config.model_name
         )
@@ -22,7 +29,7 @@ class LLMFactory:
             reasoning_effort="minimal"
         )
         if structured_output:
-            return llm.with_structured_output(structured_output)
+            return llm.with_structured_output(structured_output, include_raw=include_raw)
         if tools:
             return llm.bind_tools(tools)
         return llm
@@ -35,6 +42,7 @@ class LLMFactory:
         top_p: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         structured_output=None,
+        include_raw: bool = False,
         tools: Optional[list] = None,
         model_name: Optional[str] = None,
     ):
@@ -44,6 +52,7 @@ class LLMFactory:
             top_p=top_p,
             max_output_tokens=max_output_tokens,
             structured_output=structured_output,
+            include_raw=include_raw,
             tools=tools,
             model_name=model_name,
         )

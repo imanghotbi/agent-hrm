@@ -3,7 +3,7 @@ from langchain_core.messages import HumanMessage
 
 from app.config.config import config
 from app.config.logger import logger
-from app.services.llm_factory import LLMFactory
+from app.services.structured_output import StructuredOutputHandler
 from app.schemas.resume import ResumeData
 from app.schemas.evaluation import ResumeEvaluation
 from app.schemas.hiring import HiringRequirements
@@ -15,6 +15,16 @@ class ResumeAnalyzerService:
     def __init__(self):
         self.struct_sem = asyncio.Semaphore(config.structure_workers)
         self.eval_sem = asyncio.Semaphore(config.eval_workers)
+        self.structure_handler = StructuredOutputHandler(
+            schema=ResumeData,
+            max_retries=config.structure_max_retries,
+            model_name=config.structured_model_name,
+        )
+        self.evaluation_handler = StructuredOutputHandler(
+            schema=ResumeEvaluation,
+            max_retries=config.structure_max_retries,
+            model_name=config.structured_model_name,
+        )
 
     async def structure_text(self, file_key: str, text: str , session_id:str) -> dict | None:
         if not text:
@@ -22,23 +32,19 @@ class ResumeAnalyzerService:
             
         async with self.struct_sem:
             prompt = STRUCTURE_PROMPT_TEMPLATE.format(raw_text=text)
-            for attempt in range(1, config.structure_max_retries+1):
-                try:
-                    response = await LLMFactory.ainvoke(
-                        [HumanMessage(content=prompt)],
-                        structured_output=ResumeData,
-                    )
-                    asyncio.create_task(save_token_cost('batch_structure_node', session_id , response))
-                    data = response.model_dump(mode='json')
-                    data["_source_file"] = file_key
-                    logger.info(f"✅ [STRUCT DONE] {file_key}")
-                    return data
-                except Exception as e:
-                    if attempt == 3:
-                        logger.error(f"❌ [STRUCT FAILED] {file_key}: {e}")
-                    else:
-                        await asyncio.sleep(attempt)
-            return None
+            try:
+                response, raw_response = await self.structure_handler.ainvoke(
+                    [HumanMessage(content=prompt)]
+                )
+                if raw_response is not None:
+                    asyncio.create_task(save_token_cost("batch_structure_node", session_id, raw_response))
+                data = response.model_dump(mode="json")
+                data["_source_file"] = file_key
+                logger.info(f"✅ [STRUCT DONE] {file_key}")
+                return data
+            except Exception as e:
+                logger.error(f"❌ [STRUCT FAILED] {file_key}: {e}")
+                return None
 
     async def evaluate_resume(self, resume_dict: dict, reqs: HiringRequirements, session_id:str) -> dict | None:
         async with self.eval_sem:
@@ -49,11 +55,11 @@ class ResumeAnalyzerService:
                     resume_json=resume_obj.model_dump_json()
                 )
                 
-                eval_result = await LLMFactory.ainvoke(
-                    [HumanMessage(content=prompt)],
-                    structured_output=ResumeEvaluation,
+                eval_result, raw_response = await self.evaluation_handler.ainvoke(
+                    [HumanMessage(content=prompt)]
                 )
-                asyncio.create_task(save_token_cost('batch_evaluate_node', session_id , eval_result))
+                if raw_response is not None:
+                    asyncio.create_task(save_token_cost("batch_evaluate_node", session_id, raw_response))
                 # Logic: Weighted Calculation
                 w = reqs.weights
                 s = eval_result
