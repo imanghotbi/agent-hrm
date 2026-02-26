@@ -74,7 +74,7 @@ pre, code, .code-block {
 }
 
 .watermark::after {
-    content: "دستیار هوشمند تحلیل داده";
+    content: "دستیار هوشمند منابع انسانی";
     visibility: visible;
     display: block;
     text-align: center;
