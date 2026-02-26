@@ -30,8 +30,6 @@ class OCRService:
                     return file_key, None
 
                 text_result = ""
-                llm = LLMFactory.get_model()
-
                 for img in images:
                     img_byte_arr = io.BytesIO()
                     img.save(img_byte_arr, format='PNG')
@@ -41,7 +39,10 @@ class OCRService:
                         {"type": "text", "text": OCR_PROMPT},
                         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
                     ])
-                    response = await llm.ainvoke([msg])
+                    response = await LLMFactory.ainvoke(
+                        [msg],
+                        model_name=config.structured_model_name,
+                    )
                     asyncio.create_task(save_token_cost(self.node_name, self.session_id, response))
                     text_result += response.content + "\n"
 

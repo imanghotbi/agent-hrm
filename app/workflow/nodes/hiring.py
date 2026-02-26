@@ -33,8 +33,10 @@ async def hiring_process_node(state: OverallState):
         messages = [SystemMessage(content=HIRING_AGENT_PROMPT)] + messages
 
     # Call LLM
-    llm = LLMFactory.get_model(tools=[AgentTools.submit_hiring_requirements])
-    response = await llm.ainvoke(messages)
+    response = await LLMFactory.ainvoke(
+        messages,
+        tools=[AgentTools.submit_hiring_requirements],
+    )
     asyncio.create_task(save_token_cost("hiring_process_node", session_id, response))
     
     # Check if tool called

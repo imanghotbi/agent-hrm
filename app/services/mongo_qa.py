@@ -60,10 +60,6 @@ class ResumeQAAgent:
 
         self.tools = [search_database]
         
-        # -- INITIALIZE LLM --
-        self.llm = LLMFactory().get_model(tools=self.tools)
-
-
         # -- BUILD INTERNAL GRAPH (Thought -> Action Loop) --
         workflow = StateGraph(QAAgentState)
         
@@ -81,7 +77,10 @@ class ResumeQAAgent:
         # Inject system prompt at the start
         sys_msg = SystemMessage(content=QA_AGENT_SYSTEM_PROMPT.format(structure=self.db_structure))
         # We prepend it to the context sent to API
-        response = await self.llm.ainvoke([sys_msg] + messages)
+        response = await LLMFactory.ainvoke(
+            [sys_msg] + messages,
+            tools=self.tools,
+        )
         asyncio.create_task(save_token_cost("qa_process_node", self.session_id, response))
         return {"messages": [response]}
 

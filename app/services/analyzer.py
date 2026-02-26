@@ -22,11 +22,12 @@ class ResumeAnalyzerService:
             
         async with self.struct_sem:
             prompt = STRUCTURE_PROMPT_TEMPLATE.format(raw_text=text)
-            llm = LLMFactory.get_model(structured_output=ResumeData)
-            
             for attempt in range(1, config.structure_max_retries+1):
                 try:
-                    response = await llm.ainvoke([HumanMessage(content=prompt)])
+                    response = await LLMFactory.ainvoke(
+                        [HumanMessage(content=prompt)],
+                        structured_output=ResumeData,
+                    )
                     asyncio.create_task(save_token_cost('batch_structure_node', session_id , response))
                     data = response.model_dump(mode='json')
                     data["_source_file"] = file_key
@@ -48,8 +49,10 @@ class ResumeAnalyzerService:
                     resume_json=resume_obj.model_dump_json()
                 )
                 
-                llm = LLMFactory.get_model(structured_output=ResumeEvaluation)
-                eval_result = await llm.ainvoke([HumanMessage(content=prompt)])
+                eval_result = await LLMFactory.ainvoke(
+                    [HumanMessage(content=prompt)],
+                    structured_output=ResumeEvaluation,
+                )
                 asyncio.create_task(save_token_cost('batch_evaluate_node', session_id , eval_result))
                 # Logic: Weighted Calculation
                 w = reqs.weights

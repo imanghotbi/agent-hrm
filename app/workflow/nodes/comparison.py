@@ -58,9 +58,10 @@ async def compare_process_node(state: OverallState):
 
     prompt = COMPARISON_PROMPT.format(count=len(files), resumes_text=combined_text)
     
-    llm = LLMFactory.get_model(temperature=0.2)
-    
-    report = await llm.ainvoke([HumanMessage(content=prompt)])
+    report = await LLMFactory.ainvoke(
+        [HumanMessage(content=prompt)],
+        temperature=0.2,
+    )
     asyncio.create_task(save_token_cost("compare_process_node", session_id, report))
     report_content = parser.invoke(report)
     
@@ -86,9 +87,7 @@ async def compare_qa_process_node(state: OverallState):
     session_id = state["session_id"]
     
     prompt = COMPARE_QA_PROMPT.format(context=context, question=question)
-    llm = LLMFactory.get_model()
-    
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    response = await LLMFactory.ainvoke([HumanMessage(content=prompt)])
     asyncio.create_task(save_token_cost("compare_qa_process_node", session_id, response))
     response_content = parser.invoke(response)
     print(f"\n🤖 Comparison Assistant: {response_content}\n")

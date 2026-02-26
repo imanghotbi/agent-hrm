@@ -14,10 +14,11 @@ class Settings(BaseSettings):
     structure_max_retries:int = Field(default=3)
     
     # Optional fields with defaults for minIO
-    minio_endpoint: str = "http://5.75.206.1:9000"
+    minio_endpoint: str
     minio_resume_bucket: str = "resumes"
     minio_compare_bucket: str = "compare-resume"
-    model_name: str = "google/gemini-2.5-flash"
+    model_name: str = "deepseek/deepseek-v3.2"
+    structured_model_name: str = "google/gemini-3-flash-preview"
     
     # Mongo Config
     mongo_endpoint: str

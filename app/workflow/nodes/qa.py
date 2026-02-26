@@ -61,8 +61,7 @@ async def top_candidates_node(state: OverallState):
     top_candidates_summary = candidate_summary(top_candidates)
 
     prompt = TOP_CANDIDATE.format(top_candidate_summary=top_candidates_summary)
-    llm = LLMFactory.get_model()
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    response = await LLMFactory.ainvoke([HumanMessage(content=prompt)])
     asyncio.create_task(save_token_cost('top_candidates_node', session_id , response))
     answer = parser.invoke(response)
 

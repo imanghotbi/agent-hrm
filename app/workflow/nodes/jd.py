@@ -26,8 +26,10 @@ async def jd_process_node(state: OverallState):
     if not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=JD_REQUIREMENTS_GATHER)] + messages
 
-    llm = LLMFactory.get_model(tools=[AgentTools.submit_jd_requirements])
-    response = await llm.ainvoke(messages)
+    response = await LLMFactory.ainvoke(
+        messages,
+        tools=[AgentTools.submit_jd_requirements],
+    )
     asyncio.create_task(save_token_cost("jd_process_node", session_id, response))
 
     if response.tool_calls:
@@ -72,9 +74,10 @@ async def jd_writer_node(state: OverallState):
     prompt = JD_WRITER_PROMPT.format(reqs_json=reqs.model_dump_json())
     
     # Higher temperature for creativity
-    llm = LLMFactory.get_model(temperature=0.7)
-    
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    response = await LLMFactory.ainvoke(
+        [HumanMessage(content=prompt)],
+        temperature=0.7,
+    )
     asyncio.create_task(save_token_cost("jd_writer_node", session_id, response))
     text = parser.invoke(response)
     

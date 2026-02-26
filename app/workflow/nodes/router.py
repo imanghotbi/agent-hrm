@@ -22,9 +22,10 @@ async def router_process_node(state: OverallState):
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=ROUTER_PROMPT)] + messages
 
-    llm = LLMFactory.get_model(tools=[AgentTools.router_tool])
-    
-    response = await llm.ainvoke(messages)
+    response = await LLMFactory.ainvoke(
+        messages,
+        tools=[AgentTools.router_tool],
+    )
     asyncio.create_task(save_token_cost("router_process_node", session_id, response))
     
     if response.tool_calls:

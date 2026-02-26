@@ -218,6 +218,5 @@ __marimo__/
 .files/
 
 # --- IGNORE ---
-change.txt
-*.json
 logs/
+.DS_Store

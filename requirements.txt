@@ -1,11 +1,11 @@
-langchain-google-genai
+langchain-openai
 langgraph
 pydantic
 pydantic-settings
 pdf2image
 aioboto3
 click
-'pydantic[email]'
+pydantic[email]
 motor
 pymongo
 jdatetime

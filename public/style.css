@@ -4,11 +4,55 @@
     src: url("/public/fonts/Vazirmatn-Regular.ttf") format('truetype');
 }
 
-body, #chat-input, .cl-app, textarea, input, button, .user-message-content, .assistant-message-content {
+div.ai-message {
+    direction: rtl !important; /* Agent messages RTL */
+}
+
+div[role="article"] {
+  direction: rtl;
+  text-align: right;
+}
+
+body, #chat-input, .cl-app, textarea, input, button, .user-message-content, .assistant-message-content, .step-content {
     font-family: 'vazir', sans-serif !important;
 }
 
+/* Base Layout - LTR structure so Agent is Left, User is Right */
 body, .cl-app {
+    direction: ltr; 
+}
+
+/* User Message Bubble */
+.user-message {
+    margin-left: auto !important;
+    margin-right: 0 !important;
+    flex-direction: row-reverse !important; /* Avatar on right */
+    justify-content: flex-start !important;
+}
+
+/* Assistant Message Bubble */
+.assistant-message {
+    margin-right: auto !important;
+    margin-left: 0 !important;
+}
+
+/* User Text Content - LTR (or auto) as requested ("just agent txt have rtl") */
+.user-message-content {
+    text-align: left; /* Or right if they want right-aligned English? usually left for LTR */
+    direction: ltr;
+}
+
+/* Agent Text Content - RTL */
+.assistant-message-content {
+    text-align: right;
+    direction: rtl;
+}
+
+/* Steps (Thoughts) Styling */
+.step-header {
+    direction: ltr;
+}
+.step-content {
     direction: rtl;
     text-align: right;
 }
@@ -18,32 +62,19 @@ textarea, input {
     text-align: right;
 }
 
-.user-message-content {
-    text-align: right;
-    direction: rtl;
-}
-
-.assistant-message-content {
-    text-align: right;
-    direction: rtl;
-}
-
+/* Code Blocks LTR */
 pre, code, .code-block {
     direction: ltr !important;
     text-align: left !important;
 }
 
-div#message-composer div.flex.items-center.justify-between {
-    display: flex;
-    flex-direction: row-reverse;
-}
-
+/* Hide default watermark and add custom one */
 .watermark div {
     display: none !important;
 }
 
 .watermark::after {
-    content: "دستیار هوشمند منابع انسانی";
+    content: "دستیار هوشمند تحلیل داده";
     visibility: visible;
     display: block;
     text-align: center;
