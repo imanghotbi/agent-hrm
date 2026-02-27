@@ -41,7 +41,7 @@ class OCRService:
                     ])
                     response = await LLMFactory.ainvoke(
                         [msg],
-                        model_name=config.structured_model_name,
+                        model_name=config.ocr_model_name,
                     )
                     asyncio.create_task(save_token_cost(self.node_name, self.session_id, response))
                     text_result += response.content + "\n"

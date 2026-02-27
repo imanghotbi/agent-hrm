@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     minio_resume_bucket: str = "resumes"
     minio_compare_bucket: str = "compare-resume"
     model_name: str = "deepseek/deepseek-v3.2"
-    structured_model_name: str = "google/gemini-3-flash-preview"
+    structured_model_name: str = "deepseek/deepseek-v3.2"
+    ocr_model_name: str = "google/gemini-3-flash-preview"
     
     # Mongo Config
     mongo_endpoint: str

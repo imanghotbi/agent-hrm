@@ -68,6 +68,7 @@ STRUCTURE_MAX_RETRIES=3
 Notes:
 - `MODEL_NAME` is used for normal LLM calls.
 - `STRUCTURED_MODEL_NAME` is used for structured-output calls (e.g., schema extraction).
+- `OCR_MODEL_NAME` is used for ocr pdf
 - If you use a different provider, ensure `BASE_URL` and `API_KEY` match that provider.
 
 ### 3) Start dependencies

@@ -220,3 +220,7 @@ __marimo__/
 # --- IGNORE ---
 logs/
 .DS_Store
+minio_data
+mongo_data
+resumes
+runtime
