@@ -1,9 +1,8 @@
 import operator
-from typing import List, Dict, Any, Annotated, TypedDict, Literal
+from typing import List, Dict, Any, Annotated, TypedDict
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from app.schemas.hiring import HiringRequirements
-from app.schemas.job_description import JobDescriptionRequest
 
 def update_latest(old, new):
     return new
@@ -18,36 +17,21 @@ class BatchState(TypedDict):
     evaluated_results: List[Dict[str, Any]]
 
 class OverallState(TypedDict):
-    #run_id
+    # Run/session identifiers
     session_id : Annotated[str, update_latest]
-    
-    # Router
-    intent: Annotated[Literal["REVIEW", "WRITE", "COMPARE"], update_latest]
-    start_message: Annotated[List[BaseMessage], add_messages]
-    
-    # JD
-    jd_messages: Annotated[List[BaseMessage], add_messages]
-    jd_reqs: Annotated[JobDescriptionRequest, update_latest]
-    final_jd: str
-    
-    # Hiring
+    resume_dir: Annotated[str, update_latest]
+
+    # Hiring requirements collection
     hiring_messages: Annotated[List[BaseMessage], add_messages]
     hiring_reqs: Annotated[HiringRequirements, update_latest]
 
-    # Processing (Map-Reduce)
+    # Processing (Map-Reduce) accumulation
     evaluated_results: Annotated[List[Dict[str, Any]], operator.add]
     ocr_results: Annotated[List[Dict[str, str]], operator.add]
     all_files: List[str]
 
-    # mongo Q&A
-    db_structure: Annotated[Dict, update_latest]
-    current_question: Annotated[str, update_latest]
-    qa_answer: str
-
-    #top_cadidate
-    top_candidate: str
-
-    # Compare Phase State
-    compare_files: List[str]
-    comparison_context: str
-    compare_qa_answer: str
+    # Review runtime metadata
+    review_started_at: Annotated[str, update_latest]
+    review_completed_at: Annotated[str, update_latest]
+    review_duration_seconds: Annotated[float, update_latest]
+    review_summary: Annotated[Dict[str, Any], update_latest]

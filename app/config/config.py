@@ -9,16 +9,18 @@ class Settings(BaseSettings):
     # Required fields
     api_key: SecretStr
     base_url: Optional[str] = Field(default=None)
-    minio_secret_key: SecretStr
+    minio_secret_key: SecretStr = SecretStr("minio_unused")
     minio_access_key: str = "hrm_resume"
     structure_max_retries:int = Field(default=3)
     
-    # Optional fields with defaults for minIO
-    minio_endpoint: str
+    # Optional fields with defaults for MinIO (kept for compatibility)
+    minio_endpoint: str = "http://localhost:9000"
     minio_resume_bucket: str = "resumes"
     minio_compare_bucket: str = "compare-resume"
+    resume_source_dir: str = Field(default="resumes", validation_alias="RESUME_SOURCE_DIR")
     model_name: str = "deepseek/deepseek-v3.2"
-    structured_model_name: str = "google/gemini-3-flash-preview"
+    structured_model_name: str = "deepseek/deepseek-v3.2"
+    ocr_model_name:str = "google/gemini-3-flash-preview"
     
     # Mongo Config
     mongo_endpoint: str

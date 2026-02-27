@@ -1,30 +1,26 @@
-# Agent HRM (Resume Intelligence Workflow)
+# Agent HRM (Hiring-Only Resume Review)
 
-A Chainlit + LangGraph application for HR teams that:
-- OCRs PDF resumes
-- Structures them into a consistent schema
-- Scores candidates against hiring requirements
-- Compares candidates side-by-side
-- Answers ad-hoc questions against stored candidate data
-- Generates job descriptions
+This project now runs a **hiring-only** workflow:
+- Collect hiring requirements (including scoring weights)
+- Read resumes from a **local folder**
+- OCR + structure + evaluate candidates
+- Save candidates in MongoDB
+- Record total review duration from requirement finalization to process end
 
-The assistant communicates in Persian (Farsi) by default for user-facing flows.
+The workflow is CLI-based (no Chainlit/UI routing flow).
 
 ## Architecture Overview
-- **Chainlit**: UI and conversational runtime
-- **LangGraph**: Orchestrates the workflow state machine
-- **MongoDB**: Stores processed resumes and usage logs
-- **MinIO**: Stores raw resume files and comparison uploads
-
-Core modules:
-- `app/workflow/`: main graph and node logic
-- `app/services/`: OCR, LLM factory, analyzers, storage services
-- `utils/`: prompts, helpers, schema extraction
+- **CLI runtime (`main.py`)**: interactive terminal session
+- **LangGraph**: orchestration and checkpointing
+- **MongoDB**:
+  - candidate storage
+  - token usage logs
+  - graph checkpoints for restart/recovery
 
 ## Requirements
-- Python 3.10+ (recommended)
+- Python 3.10+
 - [uv](https://github.com/astral-sh/uv)
-- Docker + docker-compose (for MongoDB + MinIO)
+- Docker + docker-compose (MongoDB)
 
 ## Setup
 
@@ -34,7 +30,7 @@ uv pip install -r requirements.txt
 ```
 
 ### 2) Configure environment variables
-Create a `.env` file in the project root with at least the following values:
+Create `.env` from `.env-example` and fill values:
 
 ```env
 # LLM
@@ -51,48 +47,90 @@ MONGO_COLLECTION=resumes
 MONGO_USERNAME=root
 MONGO_PASSWORD=example
 
-# MinIO
-MINIO_ACCESS_KEY=hrm_resume
-MINIO_SECRET_KEY=your_minio_secret
-MINIO_ENDPOINT=http://localhost:9000
-MINIO_RESUME_BUCKET=resumes
-MINIO_COMPARE_BUCKET=compare-resume
-
-# Optional tuning
-OCR_WORKERS=5
-STRUCTURE_WORKERS=10
-EVAL_WORKERS=10
-STRUCTURE_MAX_RETRIES=3
+# Resume source
+RESUME_SOURCE_DIR=./resumes
 ```
+
+### 3) Start MongoDB
+```bash
+docker-compose up -d mongo
+```
+
+## Run
+```bash
+uv run python main.py --resume-dir ./resumes
+```
+
+Optional flags:
+- `--new-session`: force a new session even if an unfinished one exists
+- `--session-id <id>`: resume a specific session
+
+## Full Usage Flow
+1. Put all candidate resumes (`.pdf`) into your resume folder (for example `./resumes`).
+2. Run:
+```bash
+uv run python main.py --resume-dir ./resumes
+```
+3. The assistant asks hiring requirement questions in terminal.
+4. Answer until requirements are complete (including weights/scores).
+5. Review starts automatically:
+   - reads all PDFs from the folder
+   - OCR -> structure -> evaluate
+   - saves candidates to MongoDB
+6. At completion, result summary is written to:
+   - `runtime/review_result_<session_id>.json`
+
+## Restart Safety
+- LangGraph state is checkpointed in MongoDB (`MongoDBSaver`)
+- Runtime metadata is persisted in `runtime/run_state.json`
+- Final output is persisted as `runtime/review_result_<session_id>.json`
+
+If a crash/error occurs, rerun `main.py` and it resumes from the latest checkpoint by default.
+
+## Start Fresh / Clear State
+### Fresh run without deleting history (recommended)
+```bash
+uv run python main.py --new-session --resume-dir ./resumes
+```
+
+### Clear local runtime state files
+```bash
+rm -f runtime/run_state.json
+rm -f runtime/review_result_*.json
+```
+
+### Clear MongoDB checkpoints (hard reset)
+Open Mongo shell:
+```bash
+docker exec -it mongo_server mongosh -u root -p example --authenticationDatabase admin
+```
+
+Then inspect checkpoint DB/collections:
+```javascript
+show dbs
+use langgraph
+show collections
+```
+
+Delete one session:
+```javascript
+db.checkpoints.deleteMany({"thread_id":"session_xxx"})
+db.checkpoint_writes.deleteMany({"thread_id":"session_xxx"})
+```
+
+Delete all checkpoint entries:
+```javascript
+db.checkpoints.deleteMany({})
+db.checkpoint_writes.deleteMany({})
+```
+
+## What Is Logged
+- App/node operational logs: console + rotating file log (`logs/app.log`)
+- LLM token usage logs: Mongo usage collection (`MONGO_DB_USAGE`)
+- Runtime progress snapshot: `runtime/run_state.json`
+- Final review artifact: `runtime/review_result_<session_id>.json`
+- Evaluated candidates: Mongo resume collection (`MONGO_COLLECTION`)
 
 Notes:
-- `MODEL_NAME` is used for normal LLM calls.
-- `STRUCTURED_MODEL_NAME` is used for structured-output calls (e.g., schema extraction).
-- If you use a different provider, ensure `BASE_URL` and `API_KEY` match that provider.
-
-### 3) Start dependencies
-```bash
-docker-compose up -d
-```
-
-## Run (Chainlit)
-```bash
-uv run chainlit run main.py --host 0.0.0.0 --port 8000
-```
-
-Open `http://localhost:8000` in your browser.
-
-## How It Works
-1. **Router** determines whether you want resume review, JD writing, or comparison.
-2. **OCR** extracts text from resumes.
-3. **Structure** converts text to a strict JSON schema.
-4. **Scoring** evaluates each candidate against your requirements.
-5. **QA** enables database queries via natural language.
-
-## Persian Output
-Most prompts and UI responses are tuned for Persian (Farsi). If you need English output, update the prompts in `utils/prompt.py`.
-
-## Troubleshooting
-- If you see connection errors, verify MongoDB/MinIO are running and `.env` values are correct.
-- If OCR is slow, reduce DPI or worker counts in `.env`.
-- For structured-output errors, check your model supports JSON mode/structured outputs.
+- Not every raw user line is stored as a dedicated audit record.
+- Checkpoint payloads are stored in MongoDB, not as local JSON dumps.

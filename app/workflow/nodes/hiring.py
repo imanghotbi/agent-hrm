@@ -1,11 +1,11 @@
 import asyncio
+from datetime import datetime, timezone
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from langgraph.graph import  END
 from langchain_core.output_parsers import StrOutputParser
 
 from app.config.logger import logger
-from app.config.config import config
 from app.services.llm_factory import LLMFactory
 from app.workflow.llm_tools import AgentTools
 from app.schemas.hiring import HiringRequirements
@@ -24,8 +24,7 @@ async def hiring_process_node(state: OverallState):
     messages = state.get("hiring_messages")
     session_id = state["session_id"]
     if not messages:
-        # Carry over the last message from the router phase as context
-        messages = [state['start_message'][-1]]
+        messages = [HumanMessage(content="برای موقعیت شغلی جدید سوالات لازم را بپرس تا نیازمندی‌ها کامل شود.")]
         state["hiring_messages"] = messages
     
     # Ensure system prompt is present
@@ -47,9 +46,11 @@ async def hiring_process_node(state: OverallState):
             try:
                 args = tool_call["args"]
                 reqs = HiringRequirements(**args)
+                review_started_at = state.get("review_started_at") or datetime.now(timezone.utc).isoformat()
                 return {
                     "hiring_messages": [response], 
-                    "hiring_reqs": reqs
+                    "hiring_reqs": reqs,
+                    "review_started_at": review_started_at,
                 }
             except Exception as e:
                 logger.error(f"Validation Error: {e}")
@@ -70,15 +71,3 @@ def hiring_input_node(state: OverallState):
         return Command(goto=END)
         
     return {"hiring_messages": [HumanMessage(content=user_response)]}
-
-def upload_resume_node(state: OverallState):
-    """
-    Interrupts to ask user for resume files to process.
-    """
-    msg = "📂 Please upload the resumes (PDFs) you want to process."
-    user_input = interrupt(value={"type": "upload_resume", "msg": msg, "bucket_name": config.minio_resume_bucket})
-    
-    if (isinstance(user_input, str) and str(user_input).lower() in ["exit", "quit"]):
-        return Command(goto=END)
-    
-    return {"all_files": user_input}

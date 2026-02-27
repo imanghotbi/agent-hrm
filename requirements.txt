@@ -10,4 +10,3 @@ motor
 pymongo
 jdatetime
 langgraph-checkpoint-mongodb
-chainlit
