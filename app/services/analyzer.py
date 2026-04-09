@@ -33,8 +33,9 @@ class ResumeAnalyzerService:
         async with self.struct_sem:
             prompt = STRUCTURE_PROMPT_TEMPLATE.format(raw_text=text)
             try:
-                response, raw_response = await self.structure_handler.ainvoke(
-                    [HumanMessage(content=prompt)]
+                response, raw_response = await asyncio.wait_for(
+                    self.structure_handler.ainvoke([HumanMessage(content=prompt)]),
+                    timeout=config.structure_timeout_seconds,
                 )
                 if raw_response is not None:
                     asyncio.create_task(save_token_cost("batch_structure_node", session_id, raw_response))
@@ -42,6 +43,9 @@ class ResumeAnalyzerService:
                 data["_source_file"] = file_key
                 logger.info(f"✅ [STRUCT DONE] {file_key}")
                 return data
+            except asyncio.TimeoutError:
+                logger.error(f"⏱️ [STRUCT TIMEOUT] {file_key}: exceeded {config.structure_timeout_seconds}s")
+                return None
             except Exception as e:
                 logger.error(f"❌ [STRUCT FAILED] {file_key}: {e}")
                 return None
@@ -55,8 +59,9 @@ class ResumeAnalyzerService:
                     resume_json=resume_obj.model_dump_json()
                 )
                 
-                eval_result, raw_response = await self.evaluation_handler.ainvoke(
-                    [HumanMessage(content=prompt)]
+                eval_result, raw_response = await asyncio.wait_for(
+                    self.evaluation_handler.ainvoke([HumanMessage(content=prompt)]),
+                    timeout=config.eval_timeout_seconds,
                 )
                 if raw_response is not None:
                     asyncio.create_task(save_token_cost("batch_evaluate_node", session_id, raw_response))
@@ -88,6 +93,11 @@ class ResumeAnalyzerService:
                     "evaluation": eval_result.model_dump(),
                     "final_score": final_score
                 }
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"⏱️ [EVAL TIMEOUT] {resume_dict.get('_source_file')}: exceeded {config.eval_timeout_seconds}s"
+                )
+                return None
             except Exception as e:
                 logger.error(f"❌ [EVAL ERROR] {resume_dict.get('_source_file')}: {e}")
                 return None

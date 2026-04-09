@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     ocr_workers: int = Field(default=5, validation_alias="OCR_WORKERS")
     structure_workers: int = Field(default=10, validation_alias="STRUCTURE_WORKERS")
     eval_workers: int = Field(default=10, validation_alias="EVAL_WORKERS")
+    structure_timeout_seconds: int = Field(default=180, validation_alias="STRUCTURE_TIMEOUT_SECONDS")
+    eval_timeout_seconds: int = Field(default=180, validation_alias="EVAL_TIMEOUT_SECONDS")
 
     # LLM Parameters
     max_tokens: int = 20000
