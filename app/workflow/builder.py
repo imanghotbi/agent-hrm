@@ -8,8 +8,9 @@ from app.config.logger import logger
 
 def map_to_batches(state: OverallState):
     """Sharding Logic."""
-    files = state["all_files"]
-    reqs = state["hiring_reqs"]
+    files = state.get("all_files") or []
+    reqs = state.get("hiring_reqs")
+    session_id = state.get("session_id", "unknown")
     total_files = len(files)
     
     if total_files == 0:
@@ -25,7 +26,7 @@ def map_to_batches(state: OverallState):
         chunk = files[start_idx:end_idx]
         if chunk:
             batch_requests.append(Send("process_batch_subgraph", {
-                "session_id": state["session_id"],
+                "session_id": session_id,
                 "batch_id": i + 1,
                 "files_in_batch": chunk,
                 "hiring_reqs": reqs,

@@ -14,17 +14,42 @@ class MongoHandler:
 
     async def save_candidate(self, resume_data: dict):
         """Saves or updates a candidate."""
+        if not isinstance(resume_data, dict):
+            logger.warning("Skipping candidate save: payload is not a dict.")
+            return False
+
+        resume = resume_data.get("resume")
+        if not isinstance(resume, dict):
+            logger.warning("Skipping candidate save: missing or invalid 'resume' object.")
+            return False
+
+        personal_info = resume.get("personal_info")
+        if personal_info is None:
+            personal_info = {}
+        if not isinstance(personal_info, dict):
+            logger.warning("Skipping candidate save: 'personal_info' is not a dict.")
+            personal_info = {}
+
         # We use email or a hash as a unique identifier to avoid duplicates
-        email = resume_data.get('resume').get("personal_info", {}).get("email")
+        email = personal_info.get("email")
         if not email:
             # Fallback if no email: use filename or full name
-            query = {"_source_file": resume_data.get('resume').get("_source_file")}
+            source_file = resume.get("_source_file")
+            if not source_file:
+                logger.warning("Skipping candidate save: neither email nor _source_file is available.")
+                return False
+            query = {"_source_file": source_file}
         else:
             query = {"resume.personal_info.email": email}
         resume_data = enrich_resume_with_durations(resume_data)
         resume_data = fix_age_field(resume_data)
         await self.collection.update_one(query, {"$set": resume_data}, upsert=True)
-        logger.info(f"💾 Saved candidate to DB: {resume_data['final_score']:.1f}/100")
+        score = resume_data.get("final_score")
+        if isinstance(score, (int, float)):
+            logger.info(f"💾 Saved candidate to DB: {score:.1f}/100")
+        else:
+            logger.info("💾 Saved candidate to DB.")
+        return True
 
     async def get_top_candidates(self, limit: int = 5):
         """Retrieves top N candidates sorted by final_score."""

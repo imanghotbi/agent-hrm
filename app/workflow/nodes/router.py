@@ -16,34 +16,39 @@ async def router_process_node(state: OverallState):
     """
     Acts as the Receptionist. Explains features and asks for request.
     """
-    messages = state["start_message"]
-    session_id = state["session_id"]
-    # Ensure system prompt is present
-    if not messages or not isinstance(messages[0], SystemMessage):
-        messages = [SystemMessage(content=ROUTER_PROMPT)] + messages
+    try:
+        messages = state.get("start_message") or []
+        session_id = state.get("session_id", "unknown")
+        # Ensure system prompt is present
+        if not messages or not isinstance(messages[0], SystemMessage):
+            messages = [SystemMessage(content=ROUTER_PROMPT)] + messages
 
-    response = await LLMFactory.ainvoke(
-        messages,
-        tools=[AgentTools.router_tool],
-    )
-    asyncio.create_task(save_token_cost("router_process_node", session_id, response))
-    
-    if response.tool_calls:
-        tool_call = response.tool_calls[0]
-        if tool_call["name"] == "router_tool":
-            logger.info("🎯 Routing Path Defined")
-            try:
-                args = tool_call["args"]
-                # Return intent to route to next phase
-                return {"intent": args['path']}
-            except Exception as e:
-                logger.error(f"Validation Error: {e}")
-                err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
-                return {"start_message": [response, err_msg]}
+        response = await LLMFactory.ainvoke(
+            messages,
+            tools=[AgentTools.router_tool],
+        )
+        asyncio.create_task(save_token_cost("router_process_node", session_id, response))
+        
+        if response.tool_calls:
+            tool_call = response.tool_calls[0]
+            if tool_call.get("name") == "router_tool":
+                logger.info("🎯 Routing Path Defined")
+                try:
+                    args = tool_call.get("args", {})
+                    # Return intent to route to next phase
+                    return {"intent": args.get("path")}
+                except Exception as e:
+                    logger.error(f"Validation Error: {e}")
+                    err_msg = ToolMessage(tool_call_id=tool_call.get('id', 'unknown_tool_call'), content=f"Error: {str(e)}")
+                    return {"start_message": [response, err_msg]}
 
-    text = parser.invoke(response)        
-    print(f"\n🤖 Agent Answer: {text}\n")     
-    return {"start_message": [response]}
+        text = parser.invoke(response)        
+        print(f"\n🤖 Agent Answer: {text}\n")     
+        return {"start_message": [response]}
+    except Exception as exc:
+        logger.exception(f"router_process_node failed; continuing to input: {exc}")
+        fallback = HumanMessage(content="I hit a temporary routing error. Please tell me your request again.")
+        return {"start_message": [fallback]}
 
 def router_input_node(state: OverallState):
     """

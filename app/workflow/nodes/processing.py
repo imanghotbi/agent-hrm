@@ -17,19 +17,29 @@ async def batch_ocr_node(state: BatchState):
     """
     Subgraph Node: Receives a list of files and runs OCR.
     """
-    batch_id = state["batch_id"]
-    files = state["files_in_batch"]
-    session_id = state["session_id"]
+    batch_id = state.get("batch_id", "unknown")
+    files = state.get("files_in_batch") or []
+    session_id = state.get("session_id", "unknown")
     logger.info(f"⚙️ [Batch {batch_id}] Starting OCR for {len(files)} files...")
     
     ocr_service = OCRService(node_name="batch_ocr_node", session_id=session_id)
     
     # Process concurrently using the service
     tasks = [ocr_service.process_local_file(f) for f in files]
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Filter out failures
-    ocr_map = {k: v for k, v in results if v is not None}
+    ocr_map = {}
+    for item in results:
+        if isinstance(item, Exception):
+            logger.warning(f"⚠️ [Batch {batch_id}] OCR task failed: {item}")
+            continue
+        if (
+            isinstance(item, (tuple, list))
+            and len(item) == 2
+            and item[1] is not None
+        ):
+            ocr_map[item[0]] = item[1]
     
     return {"ocr_results": ocr_map}
 
@@ -37,14 +47,24 @@ async def batch_structure_node(state: BatchState):
     """
     Subgraph Node: Structures OCR text into JSON.
     """
-    ocr_map = state["ocr_results"]
-    session_id = state['session_id']
-    logger.info(f"⚙️ [Batch {state['batch_id']}] Structuring {len(ocr_map)} items...")
+    ocr_map = state.get("ocr_results") or {}
+    session_id = state.get("session_id", "unknown")
+    batch_id = state.get("batch_id", "unknown")
+    logger.info(f"⚙️ [Batch {batch_id}] Structuring {len(ocr_map)} items...")
+
+    if not isinstance(ocr_map, dict) or not ocr_map:
+        return {"structured_results": [], "ocr_results": [{}]}
     
     tasks = [analyzer_service.structure_text(k, v, session_id) for k, v in ocr_map.items()]
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    valid_results = [r for r in results if r is not None]
+    valid_results = []
+    for item in results:
+        if isinstance(item, Exception):
+            logger.warning(f"⚠️ [Batch {batch_id}] Structuring task failed: {item}")
+            continue
+        if item is not None:
+            valid_results.append(item)
     
     # Pass 'ocr_results' as a list to match the Reducer type in OverallState
     return {"structured_results": valid_results, "ocr_results": [ocr_map]}
@@ -53,11 +73,15 @@ async def batch_evaluate_node(state: BatchState):
     """
     Subgraph Node: Scores structured resumes against reqs.
     """
-    structured_list = state["structured_results"]
-    reqs_payload = state["hiring_reqs"]
-    reqs = HiringRequirements(**reqs_payload) if isinstance(reqs_payload, dict) else reqs_payload
-    batch_id = state["batch_id"]
-    session_id = state['session_id']
+    structured_list = state.get("structured_results") or []
+    reqs_payload = state.get("hiring_reqs")
+    batch_id = state.get("batch_id", "unknown")
+    session_id = state.get("session_id", "unknown")
+    try:
+        reqs = HiringRequirements(**reqs_payload) if isinstance(reqs_payload, dict) else reqs_payload
+    except Exception as exc:
+        logger.warning(f"⚠️ [Batch {batch_id}] Invalid hiring requirements; skipping evaluation: {exc}")
+        return {"evaluated_results": []}
 
     if not structured_list:
         return {"evaluated_results": []}
@@ -65,9 +89,15 @@ async def batch_evaluate_node(state: BatchState):
     logger.info(f"🧠 [Batch {batch_id}] Evaluating {len(structured_list)} resumes...")
     
     tasks = [analyzer_service.evaluate_resume(r, reqs, session_id) for r in structured_list]
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    valid_results = [r for r in results if r is not None]
+    valid_results = []
+    for item in results:
+        if isinstance(item, Exception):
+            logger.warning(f"⚠️ [Batch {batch_id}] Evaluation task failed: {item}")
+            continue
+        if item is not None:
+            valid_results.append(item)
     
     return {"evaluated_results": valid_results}
 
@@ -76,12 +106,18 @@ async def load_and_shard(state: OverallState):
     Loads all available PDF files from a local folder.
     """
     resume_dir = state.get("resume_dir") or config.resume_source_dir
-    base_dir = Path(resume_dir).expanduser().resolve()
+    try:
+        base_dir = Path(resume_dir).expanduser().resolve()
+    except Exception as exc:
+        logger.warning(f"Could not resolve resume directory '{resume_dir}': {exc}")
+        return {"all_files": []}
 
     if not base_dir.exists():
-        raise FileNotFoundError(f"Resume directory does not exist: {base_dir}")
+        logger.warning(f"Resume directory does not exist: {base_dir}. Skipping file processing.")
+        return {"all_files": []}
     if not base_dir.is_dir():
-        raise NotADirectoryError(f"Resume directory is not a folder: {base_dir}")
+        logger.warning(f"Resume directory is not a folder: {base_dir}. Skipping file processing.")
+        return {"all_files": []}
 
     files = sorted(
         str(path)
@@ -95,17 +131,33 @@ async def save_results_node(state: OverallState):
     """
     Saves all evaluated resumes to MongoDB.
     """
-    results = state["evaluated_results"]
+    results = state.get("evaluated_results") or []
     if not results:
         logger.warning("No results to save.")
         return
     
     logger.info(f"💾 Saving {len(results)} candidates to MongoDB...")
     mongo = MongoHandler()
-    session_id = state['session_id']
+    session_id = state.get("session_id", "unknown")
+    saved_count = 0
+    skipped_count = 0
     for res in results:
-        res['session_id'] = session_id
-        await mongo.save_candidate(res)
+        try:
+            if not isinstance(res, dict):
+                skipped_count += 1
+                logger.warning("Skipping result save: result item is not a dict.")
+                continue
+            res["session_id"] = session_id
+            was_saved = await mongo.save_candidate(res)
+            if was_saved:
+                saved_count += 1
+            else:
+                skipped_count += 1
+        except Exception as exc:
+            skipped_count += 1
+            logger.exception(f"Skipping candidate after save error: {exc}")
+
+    logger.info(f"✅ Save complete. saved={saved_count} skipped={skipped_count}")
     return
 
 async def finalize_review_node(state: OverallState):
@@ -123,11 +175,16 @@ async def finalize_review_node(state: OverallState):
             logger.warning(f"Could not parse review_started_at timestamp: {started_at}")
 
     results = state.get("evaluated_results", [])
-    ranked = sorted(results, key=lambda item: item.get("final_score", 0), reverse=True)
+    valid_results = [item for item in results if isinstance(item, dict)]
+    ranked = sorted(valid_results, key=lambda item: item.get("final_score", 0), reverse=True)
     top_candidates = []
     for item in ranked[:3]:
-        resume = item.get("resume", {})
-        personal = resume.get("personal_info", {})
+        resume = item.get("resume")
+        if not isinstance(resume, dict):
+            resume = {}
+        personal = resume.get("personal_info")
+        if not isinstance(personal, dict):
+            personal = {}
         top_candidates.append({
             "name": personal.get("full_name"),
             "email": personal.get("email"),
@@ -139,10 +196,10 @@ async def finalize_review_node(state: OverallState):
         "session_id": state.get("session_id"),
         "resume_dir": state.get("resume_dir"),
         "files_count": len(state.get("all_files", [])),
-        "evaluated_count": len(results),
+        "evaluated_count": len(valid_results),
         "top_candidates": top_candidates,
     }
-    logger.info(f"✅ Review finished. evaluated={len(results)} duration_seconds={duration_seconds}")
+    logger.info(f"✅ Review finished. evaluated={len(valid_results)} duration_seconds={duration_seconds}")
 
     return {
         "review_completed_at": completed_at,

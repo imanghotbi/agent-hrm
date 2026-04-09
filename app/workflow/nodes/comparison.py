@@ -34,44 +34,58 @@ async def compare_process_node(state: OverallState):
     1. OCR the selected files.
     2. Generate Comparison Report.
     """
-    session_id = state["session_id"]
-    files = state["compare_files"]
-    minio = MinioHandler()
-    if len(files) == 0:
-        files = await minio.list_files(config.minio_compare_bucket)
-        logger.info(f"📂 Found {len(files)} total resumes.")
+    try:
+        session_id = state.get("session_id", "unknown")
+        files = state.get("compare_files") or []
+        minio = MinioHandler()
+        if len(files) == 0:
+            files = await minio.list_files(config.minio_compare_bucket)
+            logger.info(f"📂 Found {len(files)} total resumes.")
 
-    logger.info(f"⚖️ Comparing {len(files)} resumes...")
-    
-    ocr_service = OCRService(node_name='compare_process_node_ocr', session_id=session_id)
+        logger.info(f"⚖️ Comparing {len(files)} resumes...")
+        if not files:
+            return {"comparison_context": "No files available for comparison."}
+        
+        ocr_service = OCRService(node_name='compare_process_node_ocr', session_id=session_id)
 
-    tasks = [ocr_service.process_file(minio, config.minio_compare_bucket, f) for f in files]
-    results = await asyncio.gather(*tasks)
-    
-    combined_text = ""
-    for i, (key, text) in enumerate(results):
-        if text:
-            combined_text += f"\n\n--- Candidate {i+1} ({key}) ---\n{text}"
-    
-    if not combined_text:
-        return {"comparison_context": "No text extracted from files."}
+        tasks = [ocr_service.process_file(minio, config.minio_compare_bucket, f) for f in files]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        combined_text = ""
+        for i, item in enumerate(results):
+            if isinstance(item, Exception):
+                logger.warning(f"Comparison OCR task failed: {item}")
+                continue
+            if (
+                isinstance(item, (tuple, list))
+                and len(item) == 2
+            ):
+                key, text = item
+                if text:
+                    combined_text += f"\n\n--- Candidate {i+1} ({key}) ---\n{text}"
+        
+        if not combined_text:
+            return {"comparison_context": "No text extracted from files."}
 
-    prompt = COMPARISON_PROMPT.format(count=len(files), resumes_text=combined_text)
-    
-    report = await LLMFactory.ainvoke(
-        [HumanMessage(content=prompt)],
-        temperature=0.2,
-    )
-    asyncio.create_task(save_token_cost("compare_process_node", session_id, report))
-    report_content = parser.invoke(report)
-    
-    print("\n" + "="*40)
-    print("      📊 COMPARISON REPORT")
-    print("="*40 + "\n")
-    print(report_content)
-    print("\n" + "="*40 + "\n")
-    
-    return {"comparison_context": report_content}
+        prompt = COMPARISON_PROMPT.format(count=len(files), resumes_text=combined_text)
+        
+        report = await LLMFactory.ainvoke(
+            [HumanMessage(content=prompt)],
+            temperature=0.2,
+        )
+        asyncio.create_task(save_token_cost("compare_process_node", session_id, report))
+        report_content = parser.invoke(report)
+        
+        print("\n" + "="*40)
+        print("      📊 COMPARISON REPORT")
+        print("="*40 + "\n")
+        print(report_content)
+        print("\n" + "="*40 + "\n")
+        
+        return {"comparison_context": report_content}
+    except Exception as exc:
+        logger.exception(f"compare_process_node failed: {exc}")
+        return {"comparison_context": "Comparison failed due to an internal error."}
 
 def compare_qa_input_node(state: OverallState):
     """Interrupt for Q&A on the comparison."""
@@ -82,13 +96,19 @@ def compare_qa_input_node(state: OverallState):
 
 async def compare_qa_process_node(state: OverallState):
     """Answers questions based on the comparison context."""
-    context = state["comparison_context"]
-    question = state["current_question"]
-    session_id = state["session_id"]
-    
-    prompt = COMPARE_QA_PROMPT.format(context=context, question=question)
-    response = await LLMFactory.ainvoke([HumanMessage(content=prompt)])
-    asyncio.create_task(save_token_cost("compare_qa_process_node", session_id, response))
-    response_content = parser.invoke(response)
-    print(f"\n🤖 Comparison Assistant: {response_content}\n")
-    return {"compare_qa_answer": response_content}
+    try:
+        context = state.get("comparison_context", "")
+        question = state.get("current_question")
+        session_id = state.get("session_id", "unknown")
+        if not question:
+            return {"compare_qa_answer": "No question received."}
+        
+        prompt = COMPARE_QA_PROMPT.format(context=context, question=question)
+        response = await LLMFactory.ainvoke([HumanMessage(content=prompt)])
+        asyncio.create_task(save_token_cost("compare_qa_process_node", session_id, response))
+        response_content = parser.invoke(response)
+        print(f"\n🤖 Comparison Assistant: {response_content}\n")
+        return {"compare_qa_answer": response_content}
+    except Exception as exc:
+        logger.exception(f"compare_qa_process_node failed: {exc}")
+        return {"compare_qa_answer": "I encountered an error while answering comparison Q&A."}

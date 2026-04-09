@@ -21,45 +21,49 @@ async def hiring_process_node(state: OverallState):
     Decides whether to respond with text (ask more questions) or call the tool (finish).
     """
     # Get history or initialize
-    messages = state.get("hiring_messages")
-    session_id = state["session_id"]
-    if not messages:
-        messages = [HumanMessage(content="برای موقعیت شغلی جدید سوالات لازم را بپرس تا نیازمندی‌ها کامل شود.")]
-        state["hiring_messages"] = messages
+    try:
+        messages = state.get("hiring_messages")
+        session_id = state.get("session_id", "unknown")
+        if not messages:
+            messages = [HumanMessage(content="برای موقعیت شغلی جدید سوالات لازم را بپرس تا نیازمندی‌ها کامل شود.")]
     
-    # Ensure system prompt is present
-    if not isinstance(messages[0], SystemMessage):
-        messages = [SystemMessage(content=HIRING_AGENT_PROMPT)] + messages
+        # Ensure system prompt is present
+        if not messages or not isinstance(messages[0], SystemMessage):
+            messages = [SystemMessage(content=HIRING_AGENT_PROMPT)] + messages
 
-    # Call LLM
-    response = await LLMFactory.ainvoke(
-        messages,
-        tools=[AgentTools.submit_hiring_requirements],
-    )
-    asyncio.create_task(save_token_cost("hiring_process_node", session_id, response))
+        # Call LLM
+        response = await LLMFactory.ainvoke(
+            messages,
+            tools=[AgentTools.submit_hiring_requirements],
+        )
+        asyncio.create_task(save_token_cost("hiring_process_node", session_id, response))
     
-    # Check if tool called
-    if response.tool_calls:
-        tool_call = response.tool_calls[0]
-        if tool_call["name"] == "submit_hiring_requirements":
-            logger.info("🎯 Hiring Requirements Collected.")
-            try:
-                args = tool_call["args"]
-                reqs = HiringRequirements(**args)
-                review_started_at = state.get("review_started_at") or datetime.now(timezone.utc).isoformat()
-                return {
-                    "hiring_messages": [response], 
-                    "hiring_reqs": reqs,
-                    "review_started_at": review_started_at,
-                }
-            except Exception as e:
-                logger.error(f"Validation Error: {e}")
-                err_msg = ToolMessage(tool_call_id=tool_call['id'], content=f"Error: {str(e)}")
-                return {"hiring_messages": [response, err_msg]}
+        # Check if tool called
+        if response.tool_calls:
+            tool_call = response.tool_calls[0]
+            if tool_call.get("name") == "submit_hiring_requirements":
+                logger.info("🎯 Hiring Requirements Collected.")
+                try:
+                    args = tool_call.get("args", {})
+                    reqs = HiringRequirements(**args)
+                    review_started_at = state.get("review_started_at") or datetime.now(timezone.utc).isoformat()
+                    return {
+                        "hiring_messages": [response], 
+                        "hiring_reqs": reqs,
+                        "review_started_at": review_started_at,
+                    }
+                except Exception as e:
+                    logger.error(f"Validation Error: {e}")
+                    err_msg = ToolMessage(tool_call_id=tool_call.get('id', 'unknown_tool_call'), content=f"Error: {str(e)}")
+                    return {"hiring_messages": [response, err_msg]}
             
-    text = parser.invoke(response)        
-    print(f"\n🤖 Agent Answer: {text}\n")     
-    return {"hiring_messages": [response]}
+        text = parser.invoke(response)        
+        print(f"\n🤖 Agent Answer: {text}\n")     
+        return {"hiring_messages": [response]}
+    except Exception as exc:
+        logger.exception(f"hiring_process_node failed; continuing to input: {exc}")
+        fallback = HumanMessage(content="I hit a temporary error while processing requirements. Please answer again.")
+        return {"hiring_messages": [fallback]}
 
 def hiring_input_node(state: OverallState):
     """

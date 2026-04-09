@@ -46,24 +46,34 @@ async def qa_process_node(state: OverallState):
     """
     Generates answer using the ResumeQAAgent (ReAct).
     """
-    question = state["current_question"]
-    structure = state["db_structure"]
-    session_id = state['session_id']
-    agent = ResumeQAAgent(structure , session_id)
-    answer = await agent.run(question)
-    
-    print(f"\n🤖 Agent Answer: {answer}\n")
-    return {"qa_answer": answer}
+    try:
+        question = state.get("current_question")
+        structure = state.get("db_structure") or {}
+        session_id = state.get("session_id", "unknown")
+        if not question:
+            return {"qa_answer": "No question received."}
+        agent = ResumeQAAgent(structure , session_id)
+        answer = await agent.run(question)
+        
+        print(f"\n🤖 Agent Answer: {answer}\n")
+        return {"qa_answer": answer}
+    except Exception as exc:
+        logger.exception(f"qa_process_node failed: {exc}")
+        return {"qa_answer": "I encountered an error while answering. Please try again."}
 
 async def top_candidates_node(state: OverallState):
-    session_id = state['session_id']
-    top_candidates = await mongo_handler.get_top_candidates(3)
-    top_candidates_summary = candidate_summary(top_candidates)
+    try:
+        session_id = state.get("session_id", "unknown")
+        top_candidates = await mongo_handler.get_top_candidates(3)
+        top_candidates_summary = candidate_summary(top_candidates or [])
 
-    prompt = TOP_CANDIDATE.format(top_candidate_summary=top_candidates_summary)
-    response = await LLMFactory.ainvoke([HumanMessage(content=prompt)])
-    asyncio.create_task(save_token_cost('top_candidates_node', session_id , response))
-    answer = parser.invoke(response)
+        prompt = TOP_CANDIDATE.format(top_candidate_summary=top_candidates_summary)
+        response = await LLMFactory.ainvoke([HumanMessage(content=prompt)])
+        asyncio.create_task(save_token_cost('top_candidates_node', session_id , response))
+        answer = parser.invoke(response)
 
-    print(f"\n🤖 Agent Answer: {answer}\n")
-    return {"top_candidate": answer}
+        print(f"\n🤖 Agent Answer: {answer}\n")
+        return {"top_candidate": answer}
+    except Exception as exc:
+        logger.exception(f"top_candidates_node failed: {exc}")
+        return {"top_candidate": "I could not fetch top candidates right now."}
