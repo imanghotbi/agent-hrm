@@ -49,18 +49,39 @@ class StructuredOutputHandler:
         try:
             # 1) Primary attempt: tool/function calling structured output.
             logger.info("Attempting structured output for %s...", self.schema.__name__)
-            chain = llm.with_structured_output(self.schema)
-            out = await chain.ainvoke(messages)
+            chain = llm.with_structured_output(self.schema, include_raw=True)
+            result = await chain.ainvoke(messages)
 
-            if out is None:
+            if isinstance(result, dict):
+                parsed = result.get("parsed")
+                raw_message = result.get("raw")
+                parsing_error = result.get("parsing_error")
+
+                if parsed is not None:
+                    return parsed, raw_message if isinstance(raw_message, BaseMessage) else None
+
+                raw_content = self._extract_raw_content(raw_message)
+                if raw_content:
+                    try:
+                        parsed_from_raw = self._validate_json(self._strip_markdown_json(raw_content))
+                        logger.info("Structured output recovered from raw payload.")
+                        return parsed_from_raw, raw_message if isinstance(raw_message, BaseMessage) else None
+                    except Exception:
+                        pass
+
+                if isinstance(parsing_error, Exception):
+                    raise parsing_error
+                raise ValueError("Structured output returned no parsed payload.")
+
+            if result is None:
                 raise ValueError("LLM returned None for structured output")
-            return out, None
+            return result, None
 
         except Exception as primary_error:
             logger.warning(
                 "Structured output failed (%s: %s). Attempting recovery...",
                 type(primary_error).__name__,
-                primary_error,
+                self._short_error(primary_error),
             )
 
             prompt_text = self._prompt_to_text(messages)
@@ -93,7 +114,7 @@ CONTEXT:
             except (ValidationError, Exception) as recovery_error:
                 logger.warning(
                     "Recovery attempt 1 failed (%s). Attempting fallback...",
-                    recovery_error,
+                    self._short_error(recovery_error),
                 )
 
                 # 3) Fallback attempt: stricter JSON-only prompt.
@@ -177,3 +198,10 @@ Return ONLY valid JSON matching this schema:
         if hasattr(self.schema, "model_json_schema"):
             return self.schema.model_json_schema()
         return self.schema.schema()
+
+    @staticmethod
+    def _short_error(error: Exception, max_len: int = 320) -> str:
+        text = str(error).replace("\n", " ").strip()
+        if len(text) <= max_len:
+            return text
+        return f"{text[:max_len]}..."
