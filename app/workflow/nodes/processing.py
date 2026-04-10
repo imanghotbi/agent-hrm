@@ -139,7 +139,9 @@ async def save_results_node(state: OverallState):
     logger.info(f"💾 Saving {len(results)} candidates to MongoDB...")
     mongo = MongoHandler()
     session_id = state.get("session_id", "unknown")
-    saved_count = 0
+    inserted_count = 0
+    updated_count = 0
+    unchanged_count = 0
     skipped_count = 0
     for res in results:
         try:
@@ -148,16 +150,28 @@ async def save_results_node(state: OverallState):
                 logger.warning("Skipping result save: result item is not a dict.")
                 continue
             res["session_id"] = session_id
-            was_saved = await mongo.save_candidate(res)
-            if was_saved:
-                saved_count += 1
+            operation = await mongo.save_candidate(res)
+            if operation == "inserted":
+                inserted_count += 1
+            elif operation == "updated":
+                updated_count += 1
+            elif operation == "unchanged":
+                unchanged_count += 1
             else:
                 skipped_count += 1
         except Exception as exc:
             skipped_count += 1
             logger.exception(f"Skipping candidate after save error: {exc}")
 
-    logger.info(f"✅ Save complete. saved={saved_count} skipped={skipped_count}")
+    total_saved_ops = inserted_count + updated_count + unchanged_count
+    logger.info(
+        "✅ Save complete. total_ops=%s inserted=%s updated=%s unchanged=%s skipped=%s",
+        total_saved_ops,
+        inserted_count,
+        updated_count,
+        unchanged_count,
+        skipped_count,
+    )
     return
 
 async def finalize_review_node(state: OverallState):

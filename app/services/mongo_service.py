@@ -12,16 +12,16 @@ class MongoHandler:
         self.collection = self.db[config.mongo_collection]
         self.usage_logs = self.db[config.mongo_db_usage]
 
-    async def save_candidate(self, resume_data: dict):
-        """Saves or updates a candidate."""
+    async def save_candidate(self, resume_data: dict) -> str:
+        """Saves or updates a candidate and returns operation status."""
         if not isinstance(resume_data, dict):
             logger.warning("Skipping candidate save: payload is not a dict.")
-            return False
+            return "skipped"
 
         resume = resume_data.get("resume")
         if not isinstance(resume, dict):
             logger.warning("Skipping candidate save: missing or invalid 'resume' object.")
-            return False
+            return "skipped"
 
         personal_info = resume.get("personal_info")
         if personal_info is None:
@@ -37,19 +37,25 @@ class MongoHandler:
             source_file = resume.get("_source_file")
             if not source_file:
                 logger.warning("Skipping candidate save: neither email nor _source_file is available.")
-                return False
+                return "skipped"
             query = {"_source_file": source_file}
         else:
             query = {"resume.personal_info.email": email}
         resume_data = enrich_resume_with_durations(resume_data)
         resume_data = fix_age_field(resume_data)
-        await self.collection.update_one(query, {"$set": resume_data}, upsert=True)
+        result = await self.collection.update_one(query, {"$set": resume_data}, upsert=True)
         score = resume_data.get("final_score")
-        if isinstance(score, (int, float)):
-            logger.info(f"💾 Saved candidate to DB: {score:.1f}/100")
+        if result.upserted_id is not None:
+            operation = "inserted"
+        elif result.modified_count > 0:
+            operation = "updated"
         else:
-            logger.info("💾 Saved candidate to DB.")
-        return True
+            operation = "unchanged"
+        if isinstance(score, (int, float)):
+            logger.info(f"💾 Saved candidate to DB ({operation}): {score:.1f}/100")
+        else:
+            logger.info(f"💾 Saved candidate to DB ({operation}).")
+        return operation
 
     async def get_top_candidates(self, limit: int = 5):
         """Retrieves top N candidates sorted by final_score."""
