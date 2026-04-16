@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from langchain_core.messages import HumanMessage
 
 from app.config.config import config
@@ -56,7 +57,8 @@ class ResumeAnalyzerService:
                 resume_obj = ResumeData(**resume_dict)
                 prompt = SCORING_PROMPT.format(
                     requirements_json=reqs.model_dump_json(),
-                    resume_json=resume_obj.model_dump_json()
+                    resume_json=resume_obj.model_dump_json(),
+                    current_date=datetime.now().strftime("%Y-%m-%d")
                 )
                 
                 eval_result, raw_response = await asyncio.wait_for(
