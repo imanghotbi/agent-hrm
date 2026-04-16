@@ -6,7 +6,7 @@ from app.schemas.resume import ResumeData
 # SUB-MODELS
 # ==================================================
 class CategoryScore(BaseModel):
-    score: int = Field(..., description="Score from 0 to 100")
+    score: int = Field(..., ge=0, le=100 ,description="Score from 0 to 100")
     reasoning: str = Field(..., description="Short explanation")
 
 class ResumeEvaluation(BaseModel):

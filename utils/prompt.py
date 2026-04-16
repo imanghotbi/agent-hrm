@@ -76,12 +76,13 @@ Assign a score (0-100) for each category.
 
 **Instructions:**
 1. **Hard Skills:** 100 = All essential skills + some nice-to-have. 0 = No skills.
-2. **Experience:** Compare years and seniority level.Of course, experience related to the requested field should be the final scoring criterion.
+2. **Experience:** Compare years and seniority level.Of course, experience related to the requested field should be the final scoring criterion.For experience and work level, if the amount mentioned is over qualified with the amount on the resume, consider a score of 0.
 3. **Education:** 100 = Exact or higher degree match.
 4. **University Tier** 100 = Tier 1 , 0 =  Tier 4
 5. **Soft Skills:** Infer from summary/experience if not explicit.
 6. **Military Service:** If required=True and candidate is NOT Exempt/Completed, score is 0. Otherwise 100.
 7. Provide a short reasoning for each.
+8. Only the overqualified value in work experience should be considered a zero, and in other cases, if the person's resume is much more than required, a score of 100 should be considered.
 
 Output JSON strictly adhering to the `ResumeEvaluation` schema structure (excluding final_weighted_score, I will calc that).
 """
